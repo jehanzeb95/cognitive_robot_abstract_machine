@@ -88,8 +88,11 @@ class NextCommands:
         :return: Name of first variable found below threshold or None if all above
         :raises ValueError: If length of thresholds doesn't match number of free variables
         """
+        data = []
         for free_variable in free_variables:
-            if free_variable.is_base and self.free_variable_data[free_variable.name][0] > free_variable.threshold:
-                return True
-        return False
+            if free_variable.is_base:
+                data.append(self.free_variable_data[free_variable.name][0])
+        v = np.linalg.norm(data)
+        # print(v)
+        return v > 0.01
 

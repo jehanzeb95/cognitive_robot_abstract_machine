@@ -293,14 +293,14 @@ class QPController:
                                                                                 self.mpc_dt))
 
             if next_commands[0].are_uncertain_variables_needed(self.free_variables):
-                print('on')
+                # print('on')
                 return next_commands[0]
             for v in self.uncertain_free_variables:
                 last_state = god_map.world.state[v.name]
                 next_commands[1].free_variable_data[v.name] = [0.0,
                                                                0.0,
                                                                -last_state[1]/self.mpc_dt**2-last_state[2]/self.mpc_dt]
-            print('off')
+            # print('off')
             return next_commands[1]
 
         except InfeasibleException as e_original:
