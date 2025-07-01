@@ -205,15 +205,14 @@ class ProblemDataPart(ABC):
 
 class Weights(ProblemDataPart):
     """
-    format:
+    order:
         free_variable_velocity
         free_variable_acceleration
         free_variable_jerk
-        equality_constraints
-        derivative_constraints_velocity
-        derivative_constraints_acceleration
-        derivative_constraints_jerk
-        inequality_constraints
+        eq integral constraints
+        eq vel constraints
+        neq integral constraints
+        neq vel constraints
     """
 
     def __init__(self, free_variables: List[FreeVariable],
@@ -252,8 +251,8 @@ class Weights(ProblemDataPart):
         components.extend(self.free_variable_weights_expression(quadratic_weight_gains=quadratic_weight_gains))
         components.append(self.equality_weight_expressions())
         components.extend(self.eq_derivative_weight_expressions())
-        components.extend(self.derivative_weight_expressions())
         components.append(self.inequality_weight_expressions())
+        components.extend(self.derivative_weight_expressions())
         weights, _ = self._sorter(*components)
         weights = cas.Expression(weights)
         linear_weights = self.linear_weights_expression(linear_weight_gains=linear_weight_gains)
@@ -359,15 +358,14 @@ class Weights(ProblemDataPart):
 
 class FreeVariableBounds(ProblemDataPart):
     """
-    format:
+    order:
         free_variable_velocity
         free_variable_acceleration
         free_variable_jerk
-        slack_equality_constraints
-        slack_derivative_constraints_velocity
-        slack_derivative_constraints_acceleration
-        slack_derivative_constraints_jerk
-        slack_inequality_constraints
+        eq integral constraints
+        eq vel constraints
+        neq integral constraints
+        neq vel constraints
     """
     names: np.ndarray
     names_without_slack: np.ndarray
@@ -475,14 +473,17 @@ class FreeVariableBounds(ProblemDataPart):
 
     @profile
     def construct_expression(self) -> Union[cas.Expression, Tuple[cas.Expression, cas.Expression]]:
+        # derivative model
         lb_params, ub_params = self.free_variable_bounds()
         num_free_variables = sum(len(x) for x in lb_params)
 
+        # eq integral constraints
         equality_constraint_slack_lower_bounds = self.equality_constraint_slack_lower_bound()
         num_eq_slacks = len(equality_constraint_slack_lower_bounds)
         lb_params.append(equality_constraint_slack_lower_bounds)
         ub_params.append(self.equality_constraint_slack_upper_bound())
 
+        # eq vel constraints
         num_eq_derivative_slack = 0
         for derivative in Derivatives.range(Derivatives.velocity, self.max_derivative):
             lower_slack, upper_slack = self.eq_derivative_slack_limits(derivative)
@@ -490,6 +491,11 @@ class FreeVariableBounds(ProblemDataPart):
             lb_params.append(lower_slack)
             ub_params.append(upper_slack)
 
+        # neq integral constraints
+        lb_params.append(self.inequality_constraint_slack_lower_bound())
+        ub_params.append(self.inequality_constraint_slack_upper_bound())
+
+        # neq vel constraints
         num_derivative_slack = 0
         for derivative in Derivatives.range(Derivatives.velocity, self.max_derivative):
             lower_slack, upper_slack = self.derivative_slack_limits(derivative)
@@ -497,8 +503,6 @@ class FreeVariableBounds(ProblemDataPart):
             lb_params.append(lower_slack)
             ub_params.append(upper_slack)
 
-        lb_params.append(self.inequality_constraint_slack_lower_bound())
-        ub_params.append(self.inequality_constraint_slack_upper_bound())
 
         lb, self.names = self._sorter(*lb_params)
         ub, _ = self._sorter(*ub_params)
@@ -520,12 +524,11 @@ class FreeVariableBounds(ProblemDataPart):
 
 class EqualityBounds(ProblemDataPart):
     """
-    Format:
-        last free variable velocity
-        0
-        last free variable acceleration
-        0
-        equality_constraint_bounds
+
+    order:
+        derivative model (optional)
+        eq integral constraints
+        eq vel constraints
     """
     names: np.ndarray
     names_equality_constraints: np.ndarray
@@ -592,6 +595,7 @@ class EqualityBounds(ProblemDataPart):
         :return:
         """
         bounds = []
+        # derivative model
         if not self.qp_formulation.has_explicit_acc_variables and self.qp_formulation.has_explicit_jerk_variables:
             derivative_link = {}
             for t in range(self.prediction_horizon):
@@ -616,12 +620,16 @@ class EqualityBounds(ProblemDataPart):
 
         num_derivative_links = sum(len(x) for x in bounds)
         num_derivative_constraints = 0
+
+        # eq integral constraints
+        bounds.append(self.equality_constraint_bounds())
+
+        # eq vel constraints
         for derivative in Derivatives.range(Derivatives.velocity, self.max_derivative):
             bound = self.eq_derivative_constraint_bounds(derivative)
             num_derivative_constraints += len(bound)
             bounds.append(bound)
 
-        bounds.append(self.equality_constraint_bounds())
         bounds, self.names = self._sorter(*bounds)
         self.names_derivative_links = self.names[:num_derivative_links]
         # self.names_equality_constraints = self.names[num_derivative_links:]
@@ -630,11 +638,10 @@ class EqualityBounds(ProblemDataPart):
 
 class InequalityBounds(ProblemDataPart):
     """
-    Format:
-        derivative position+velocity bounds
-        derivative acceleration bounds
-        derivative jerk bounds
-        inequality bounds
+    order:
+        derivative model (optional)
+        neq integral constraints
+        neq vel constraints
     """
     names: np.ndarray
     names_position_limits: np.ndarray
@@ -754,6 +761,7 @@ class InequalityBounds(ProblemDataPart):
         lb_params: List[Dict[str, cas.Expression]] = []
         ub_params: List[Dict[str, cas.Expression]] = []
 
+        # derivative model
         if self.qp_formulation.has_explicit_pos_limits:
             lb, ub = self.implicit_pos_model_limits()
             lb_params.extend(lb)
@@ -764,17 +772,19 @@ class InequalityBounds(ProblemDataPart):
             lb_params.extend(lb)
             ub_params.extend(ub)
 
+        # neq integral constraints
+        lower_inequality_constraint_bounds = self.lower_inequality_constraint_bound()
+        lb_params.append(lower_inequality_constraint_bounds)
+        ub_params.append(self.upper_inequality_constraint_bound())
+        num_neq_constraints = len(lower_inequality_constraint_bounds)
+
+        # neq vel constraints
         num_derivative_constraints = 0
         for derivative in Derivatives.range(Derivatives.velocity, self.max_derivative):
             lower, upper = self.derivative_constraint_bounds(derivative)
             num_derivative_constraints += len(lower)
             lb_params.append(lower)
             ub_params.append(upper)
-
-        lower_inequality_constraint_bounds = self.lower_inequality_constraint_bound()
-        lb_params.append(lower_inequality_constraint_bounds)
-        ub_params.append(self.upper_inequality_constraint_bound())
-        num_neq_constraints = len(lower_inequality_constraint_bounds)
 
         lbA, self.names = self._sorter(*lb_params)
         ubA, _ = self._sorter(*ub_params)
@@ -1046,12 +1056,12 @@ class EqualityModel(ProblemDataPart):
         slack_model_parts = []
         if len(derivative_link_model) > 0:
             model_parts.append(derivative_link_model)
-        if len(vel_constr_model) > 0:
-            model_parts.append(vel_constr_model)
-            slack_model_parts.append(vel_constr_slack_model)
         if len(equality_constraint_model) > 0:
             model_parts.append(equality_constraint_model)
             slack_model_parts.append(equality_constraint_slack_model)
+        if len(vel_constr_model) > 0:
+            model_parts.append(vel_constr_model)
+            slack_model_parts.append(vel_constr_slack_model)
 
         if len(model_parts) == 0:
             # if there are no eq constraints, make an empty matrix with the right columns to prevent stacking issues
@@ -1069,12 +1079,10 @@ class EqualityModel(ProblemDataPart):
 
 class InequalityModel(ProblemDataPart):
     """
-    Format:
-        implicit model
-        velocity constraints
-        acceleration constraints
-        jerk constraints
-        inequality constraints
+    order:
+        derivative model (optional)
+        neq integral constraints
+        neq vel constraints
     """
 
     @property
@@ -1405,14 +1413,20 @@ class InequalityModel(ProblemDataPart):
         else:
             max_derivative = self.max_derivative
             derivative_model, derivative_model_slack = cas.Expression(), cas.Expression()
-        vel_constr_model, vel_constr_slack_model = self.velocity_constraint_model()
+
+
         inequality_model, inequality_slack_model = self.inequality_constraint_model(max_derivative)
+        vel_constr_model, vel_constr_slack_model = self.velocity_constraint_model()
+
+        # derivative model
         if len(derivative_model) > 0:
             model_parts.append(derivative_model)
             slack_model_parts.append(derivative_model_slack)
+        # neq integral constraints
         if len(vel_constr_model) > 0:
             model_parts.append(vel_constr_model)
             slack_model_parts.append(vel_constr_slack_model)
+        # neq vel constraints
         if len(inequality_model) > 0:
             model_parts.append(inequality_model)
             slack_model_parts.append(inequality_slack_model)
