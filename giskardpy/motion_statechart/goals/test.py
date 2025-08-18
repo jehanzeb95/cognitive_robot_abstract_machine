@@ -54,7 +54,7 @@ class GraspSequence(Goal):
                               weight=self.weight)
         self.add_task(grasp)
 
-        lift_pose = god_map.world.transform(god_map.world.root_link_name, goal_pose)
+        lift_pose = god_map.world.transform(target_frame=god_map.world.root_link_name, spatial_object=goal_pose)
         lift_pose.z += 0.1
 
         lift = CartesianPose(root_link=self.root_link,

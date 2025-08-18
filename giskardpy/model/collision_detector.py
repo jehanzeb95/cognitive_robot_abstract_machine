@@ -27,7 +27,7 @@ from semantic_world.utils import copy_lru_cache
 from semantic_world.world_entity import Body, Connection
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class Collision:
     contact_distance_input: float = 0.0
     link_a: Body = field(default=None)
@@ -157,7 +157,7 @@ class Collision:
 @dataclass
 class SortedCollisionResults:
     data: List[Collision] = field(default_factory=list)
-    default_result: Collision = field(default_factory=lambda : Collision(contact_distance_input=100))
+    default_result: Collision = field(default_factory=lambda: Collision(contact_distance_input=100))
 
     def _sort(self, x: Collision):
         return x.contact_distance
@@ -170,35 +170,26 @@ class SortedCollisionResults:
         try:
             return self.data[item]
         except (KeyError, IndexError) as e:
-            return SortedCollisionResults.default_result
+            return self.default_result
 
 
 @dataclass
 class Collisions:
     collision_list_size: int
-    all_collisions: Set[Collision]
-    frozen_connections: List[Connection] = field(default_factory=list)
     self_collisions: Dict[Tuple[Body, Body], SortedCollisionResults] = field(
         default_factory=lambda: defaultdict(SortedCollisionResults))
     external_collisions: Dict[Body, SortedCollisionResults] = field(
         default_factory=lambda: defaultdict(SortedCollisionResults))
     external_collision_long_key: Dict[Tuple[Body, Body], Collision] = field(
         default_factory=lambda: defaultdict(lambda: SortedCollisionResults.default_result))
-    all_collisions: Set[Collision] = field(default_factory=set)
+    all_collisions: List[Collision] = field(default_factory=list)
     number_of_self_collisions: Dict[Tuple[Body, Body], int] = field(default_factory=lambda: defaultdict(int))
     number_of_external_collisions: Dict[Body, int] = field(default_factory=lambda: defaultdict(int))
 
-    @profile
-    def __post_init__(self):
-        self.frozen_connections = []
-        robot: AbstractRobot
-        for robot in god_map.world.search_for_views_of_type(AbstractRobot):
-            self.frozen_connections.extend(robot.collision_config.frozen_connections)
-
-    def get_robot_from_self_collision(self, collision):
-        link_a, link_b = collision.link_a, collision.link_b
+    def get_robot_from_self_collision(self, collision: Collision) -> Optional[AbstractRobot]:
+        body_a, body_b = collision.link_a, collision.link_b
         for robot in god_map.collision_scene.robots:
-            if link_a in robot.link_names_as_set and link_b in robot.link_names_as_set:
+            if body_a in robot.bodies and body_b in robot.bodies:
                 return robot
 
     @profile
@@ -226,55 +217,59 @@ class Collisions:
                                                           self.number_of_self_collisions[key] + 1)
             except Exception as e:
                 pass
-        self.all_collisions.add(collision)
+        self.all_collisions.append(collision)
 
     @profile
     def transform_self_collision(self, collision: Collision, robot: AbstractRobot) -> Collision:
         link_a = collision.original_link_a
         link_b = collision.original_link_b
-        new_link_a, new_link_b = god_map.world.compute_chain_reduced_to_controlled_joints(link_a, link_b,
-                                                                                          self.frozen_connections)
-        if not god_map.world.link_order(new_link_a, new_link_b):
+        new_link_a, new_link_b = god_map.world.compute_chain_reduced_to_controlled_joints(link_a, link_b)
+        if new_link_a.name < new_link_b.name:
             collision = collision.reverse()
             new_link_a, new_link_b = new_link_b, new_link_a
         collision.link_a = new_link_a
         collision.link_b = new_link_b
 
-        new_b_T_r = god_map.world.compute_fk_np(new_link_b, robot.root)
-        root_T_map = god_map.world.compute_fk_np(robot.root, god_map.world.root_link_name)
+        new_b_T_r = god_map.world.compute_forward_kinematics_np(new_link_b, robot.root)
+        root_T_map = god_map.world.compute_forward_kinematics_np(robot.root, god_map.world.root)
         new_b_T_map = new_b_T_r @ root_T_map
         collision.new_b_V_n = new_b_T_map @ collision.map_V_n
 
         if collision.map_P_pa is not None:
-            new_a_T_r = god_map.world.compute_fk_np(new_link_a, robot.root)
+            new_a_T_r = god_map.world.compute_forward_kinematics_np(new_link_a, robot.root)
             collision.new_a_P_pa = new_a_T_r @ root_T_map @ collision.map_P_pa
             collision.new_b_P_pb = new_b_T_map @ collision.map_P_pb
         else:
-            new_a_T_a = god_map.world.compute_fk_np(new_link_a, collision.original_link_a)
+            new_a_T_a = god_map.world.compute_forward_kinematics_np(new_link_a, collision.original_link_a)
             collision.new_a_P_pa = new_a_T_a @ collision.a_P_pa
-            new_b_T_b = god_map.world.compute_fk_np(new_link_b, collision.original_link_b)
+            new_b_T_b = god_map.world.compute_forward_kinematics_np(new_link_b, collision.original_link_b)
             collision.new_b_P_pb = new_b_T_b @ collision.b_P_pb
         return collision
 
     @profile
     def transform_external_collision(self, collision: Collision) -> Collision:
-        link_name = collision.original_link_a
-        joint = god_map.world.links[link_name].parent_joint_name
+        body_a = collision.original_link_a
+        movable_joint = body_a.parent_connection
 
-        def stopper(joint_name):
-            return god_map.world.is_joint_controlled(joint_name) and joint_name not in self.frozen_connections
+        def is_joint_movable(connection: ActiveConnection):
+            return (isinstance(connection, ActiveConnection)
+                    and connection.is_controlled
+                    and connection not in god_map.world.frozen_connections)
 
-        try:
-            movable_joint = god_map.world.search_for_parent_joint(joint, stopper)
-        except KeyError as e:
-            movable_joint = joint
-        new_a = god_map.world.joints[movable_joint].child_link_name
+        while movable_joint != god_map.world.root:
+            if is_joint_movable(movable_joint):
+                break
+            movable_joint = movable_joint.parent.parent_connection
+        else:
+            raise Exception(f'{body_a.name} has no movable parent connection '
+                            f'and should\'t have collision checking enabled.')
+        new_a = movable_joint.child
         collision.link_a = new_a
         if collision.map_P_pa is not None:
-            new_a_T_map = god_map.world.compute_fk_np(new_a, god_map.world.root_link_name)
+            new_a_T_map = god_map.world.compute_forward_kinematics_np(new_a, god_map.world.root)
             collision.new_a_P_pa = new_a_T_map @ collision.map_P_pa
         else:
-            new_a_T_a = god_map.world.compute_fk_np(new_a, collision.original_link_a)
+            new_a_T_a = god_map.world.compute_forward_kinematics_np(new_a, collision.original_link_a)
             collision.new_a_P_pa = new_a_T_a @ collision.a_P_pa
 
         return collision
@@ -333,6 +328,10 @@ class CollisionDetector(abc.ABC):
                          buffer: float = 0.05) -> Collisions:
         pass
 
+    @abc.abstractmethod
+    def reset_cache(self):
+        pass
+
     def find_colliding_combinations(self, body_combinations: Iterable[Tuple[Body, Body]],
                                     distance: float,
                                     update_query: bool) -> Set[Tuple[Body, Body]]:
@@ -352,5 +351,3 @@ class NullCollisionDetector(CollisionDetector):
     def find_colliding_combinations(self, body_combinations: Iterable[Tuple[Body, Body]], distance: float,
                                     update_query: bool) -> Set[Tuple[Body, Body]]:
         pass
-
-

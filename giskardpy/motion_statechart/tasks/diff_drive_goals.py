@@ -21,12 +21,12 @@ class DiffDriveTangentialToPoint(Task):
         if name is None:
             name = f'{self.__class__.__name__}/{self.root}/{self.tip}'
         super().__init__(name=name)
-        self.goal_point = god_map.world.transform(god_map.world.root_link_name, goal_point)
+        self.goal_point = god_map.world.transform(target_frame=god_map.world.root_link_name, spatial_object=goal_point)
         self.goal_point.z = 0
         self.weight = weight
         self.drive = drive
         if forward is not None:
-            self.tip_V_pointing_axis = god_map.world.transform(self.tip, forward)
+            self.tip_V_pointing_axis = god_map.world.transform(target_frame=self.tip, spatial_object=forward)
             self.tip_V_pointing_axis.scale(1)
         else:
             self.tip_V_pointing_axis = cas.Vector3((1, 0, 0))
@@ -87,7 +87,7 @@ class KeepHandInWorkspace(Task):
         super().__init__(name=name)
 
         if pointing_axis is not None:
-            self.map_V_pointing_axis = god_map.world.transform(self.base_footprint, pointing_axis)
+            self.map_V_pointing_axis = god_map.world.transform(target_frame=self.base_footprint, spatial_object=pointing_axis)
             self.map_V_pointing_axis.scale(1)
         else:
             self.map_V_pointing_axis = cas.Vector3((1, 0, 0))

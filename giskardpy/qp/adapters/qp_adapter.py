@@ -1083,7 +1083,7 @@ class InequalityModel(ProblemDataPart):
             0]
 
     def get_free_variable_symbols(self, order: Derivatives):
-        return self._sorter({v.symbols.position: v.symbols.data[order] for v in self.free_variables})[0]
+        return self._sorter({v.symbols.position.name: v.symbols.data[order] for v in self.free_variables})[0]
 
     def velocity_constraint_model(self) -> Tuple[cas.Expression, cas.Expression]:
         """

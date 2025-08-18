@@ -137,6 +137,9 @@ class MotionGraphNodeStateManager(Generic[T]):
 
 @profile
 def compile_graph_node_state_updater(node_state: MotionGraphNodeStateManager) -> cas.Expression:
+    """
+    Implements the state transition logic for motion statechart nodes
+    """
     state_updater = []
     node: MotionStatechartNode
     for node in node_state.nodes:

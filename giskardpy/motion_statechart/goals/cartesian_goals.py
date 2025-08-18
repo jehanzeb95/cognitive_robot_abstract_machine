@@ -77,7 +77,7 @@ class DiffDriveBaseGoal(Goal):
         self.map = root_link
         self.base_footprint = tip_link
         super().__init__(name=name)
-        self.goal_pose = god_map.world.transform(self.map, goal_pose)
+        self.goal_pose = god_map.world.transform(target_frame=self.map, spatial_object=goal_pose)
         self.goal_pose.z = 0
         diff_drive_joints = [v for k, v in god_map.world.joints.items() if isinstance(v, DiffDrive)]
         assert len(diff_drive_joints) == 1
@@ -85,7 +85,8 @@ class DiffDriveBaseGoal(Goal):
         self.odom = self.joint.parent_link_name
 
         if pointing_axis is not None:
-            self.base_footprint_V_pointing_axis = god_map.world.transform(self.base_footprint, pointing_axis)
+            self.base_footprint_V_pointing_axis = god_map.world.transform(target_frame=self.base_footprint,
+                                                                          spatial_object=pointing_axis)
             self.base_footprint_V_pointing_axis.scale(1)
         else:
             self.base_footprint_V_pointing_axis = cas.Vector3()

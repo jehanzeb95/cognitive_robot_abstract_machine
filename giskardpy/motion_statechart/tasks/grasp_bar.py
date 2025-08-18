@@ -41,12 +41,12 @@ class GraspBar(Task):
             name = f'{self.__class__.__name__}/{self.root}/{self.tip}'
         super().__init__(name=name)
 
-        bar_center = god_map.world.transform(self.root, bar_center)
+        bar_center = god_map.world.transform(target_frame=self.root, spatial_object=bar_center)
 
-        tip_grasp_axis = god_map.world.transform(self.tip, tip_grasp_axis)
+        tip_grasp_axis = god_map.world.transform(target_frame=self.tip, spatial_object=tip_grasp_axis)
         tip_grasp_axis.scale(1)
 
-        bar_axis = god_map.world.transform(self.root, bar_axis)
+        bar_axis = god_map.world.transform(target_frame=self.root, spatial_object=bar_axis)
         bar_axis.scale(1)
 
         self.bar_axis = bar_axis

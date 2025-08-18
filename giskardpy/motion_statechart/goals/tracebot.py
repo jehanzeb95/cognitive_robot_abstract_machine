@@ -31,11 +31,11 @@ class InsertCylinder(Goal):
             self.cylinder_height = cylinder_height
         self.tilt = tilt
         self.pre_grasp_height = pre_grasp_height
-        self.root_P_hole = god_map.world.transform(self.root, hole_point)
+        self.root_P_hole = god_map.world.transform(target_frame=self.root, spatial_object=hole_point)
         if up is None:
             up = cas.Vector3((0, 0, 1))
             up.reference_frame = self.root
-        self.root_V_up = god_map.world.transform(self.root, up)
+        self.root_V_up = god_map.world.transform(target_frame=self.root, spatial_object=up)
 
         self.weight = WEIGHT_ABOVE_CA
 

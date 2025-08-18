@@ -32,7 +32,7 @@ class BaseArmWeightScaling(Task):
         super().__init__(name=name)
 
         root_P_tip = god_map.world.compose_fk_expression(self.root_link, self.tip_link).to_position()
-        root_P_goal = god_map.world.transform(self.root_link, tip_goal)
+        root_P_goal = god_map.world.transform(target_frame=self.root_link, spatial_object=tip_goal)
         scaling_exp = root_P_goal - root_P_tip
 
         list_gains = []

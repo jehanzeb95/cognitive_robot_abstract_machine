@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
 
 import betterpybullet as pb
@@ -7,11 +8,13 @@ from line_profiler.explicit_profiler import profile
 from pkg_resources import resource_filename
 
 from giskardpy.god_map import god_map
-from giskardpy.model.collision_world_syncer import Collision
+from giskardpy.model.collision_detector import Collision
 from semantic_world.prefixed_name import PrefixedName
 from giskardpy.middleware import get_middleware
 from giskardpy.utils.utils import suppress_stdout
-from semantic_world.geometry import Shape, Box, Sphere, Cylinder, Mesh
+from semantic_world.geometry import Shape, Box, Sphere, Cylinder, Mesh, Scale
+from semantic_world.robots import AbstractRobot
+from semantic_world.world import World
 from semantic_world.world_entity import Body
 
 CollisionObject = pb.CollisionObject
@@ -20,21 +23,20 @@ if not hasattr(pb, '__version__') or pb.__version__ != '1.0.0':
     raise ImportError('Betterpybullet is outdated.')
 
 
-class BPCollisionWrapper(Collision):
-    @profile
-    def __init__(self, pb_collision: pb.Collision):
-        self.pb_collision = pb_collision
-        super().__init__(link_a=self.pb_collision.obj_a.name,
-                         link_b=self.pb_collision.obj_b.name,
-                         contact_distance=self.pb_collision.contact_distance,
-                         map_P_pa=self.pb_collision.map_P_pa,
-                         map_P_pb=self.pb_collision.map_P_pb,
-                         map_V_n=self.pb_collision.world_V_n,
-                         a_P_pa=self.pb_collision.a_P_pa,
-                         b_P_pb=self.pb_collision.b_P_pb)
-        self.original_link_a = self.link_a
-        self.original_link_b = self.link_b
-        self.is_external = None
+def create_collision(pb_collision: pb.Collision, world: World) -> Collision:
+    collision = Collision(
+        link_a=world.get_body_by_name(pb_collision.obj_a.name),
+        link_b=world.get_body_by_name(pb_collision.obj_b.name),
+        contact_distance_input=pb_collision.contact_distance,
+        map_P_pa=pb_collision.map_P_pa,
+        map_P_pb=pb_collision.map_P_pb,
+        map_V_n_input=pb_collision.world_V_n,
+        a_P_pa=pb_collision.a_P_pa,
+        b_P_pb=pb_collision.b_P_pb)
+    collision.original_link_a = collision.link_a
+    collision.original_link_b = collision.link_b
+    collision.is_external = None
+    return collision
 
 
 def create_cube_shape(extents: Tuple[float, float, float]) -> pb.BoxShape:
@@ -51,7 +53,7 @@ def create_cylinder_shape(diameter: float, height: float) -> pb.CylinderShape:
     file_name = resource_filename('giskardpy', '../test/urdfs/meshes/cylinder.obj')
     return load_convex_mesh_shape(file_name,
                                   single_shape=True,
-                                  scale=[diameter, diameter, height])
+                                  scale=Scale(diameter, diameter, height))
 
 
 def create_sphere_shape(diameter: float) -> pb.SphereShape:
@@ -66,9 +68,9 @@ def create_shape_from_geometry(geometry: Shape) -> pb.CollisionShape:
     elif isinstance(geometry, Sphere):
         shape = create_sphere_shape(geometry.radius * 2)
     elif isinstance(geometry, Cylinder):
-        shape = create_cylinder_shape(geometry.radius * 2, geometry.height)
+        shape = create_cylinder_shape(geometry.width, geometry.height)
     elif isinstance(geometry, Mesh):
-        shape = load_convex_mesh_shape(geometry.filename, scale=geometry.scale)
+        shape = load_convex_mesh_shape(geometry.filename, single_shape=False, scale=geometry.scale)
         # todo geometry.set_collision_file_name(shape.file_path)
     else:
         raise NotImplementedError()
@@ -101,18 +103,19 @@ def create_compound_shape(shapes_poses: List[Tuple[pb.Transform, pb.CollisionSha
 
 # Technically the tracker is not required here,
 # since the loader keeps references to the loaded shapes.
-def load_convex_mesh_shape(pkg_filename: str, single_shape=False, scale=(1, 1, 1)) -> pb.ConvexShape:
+def load_convex_mesh_shape(pkg_filename: str, single_shape: bool, scale: Scale) -> pb.ConvexShape:
     if not pkg_filename.endswith('.obj'):
         obj_pkg_filename = convert_to_decomposed_obj_and_save_in_tmp(pkg_filename)
     else:
         obj_pkg_filename = pkg_filename
     return pb.load_convex_shape(get_middleware().resolve_iri(obj_pkg_filename),
                                 single_shape=single_shape,
-                                scaling=pb.Vector3(scale[0], scale[1], scale[2]))
+                                scaling=pb.Vector3(scale.x, scale.y, scale.z))
 
 
-def convert_to_decomposed_obj_and_save_in_tmp(file_name: str, log_path='/tmp/giskardpy/vhacd.log'):
-    first_group_name = list(god_map.world.groups.keys())[0]
+def convert_to_decomposed_obj_and_save_in_tmp(file_name: str,
+                                              log_path='/tmp/giskardpy/vhacd.log') -> str:
+    first_group_name = list(god_map.world.search_for_views_of_type(AbstractRobot))[0].name
     resolved_old_path = get_middleware().resolve_iri(file_name)
     short_file_name = file_name.split('/')[-1][:-3]
     obj_file_name = f'{first_group_name}/{short_file_name}obj'
@@ -166,7 +169,7 @@ def create_compund_object(shapes_transforms, transform=pb.Transform.identity()):
 
 
 def create_convex_mesh(pkg_filename, transform=pb.Transform.identity()):
-    return create_object(load_convex_mesh_shape(pkg_filename), transform)
+    return create_object(load_convex_mesh_shape(pkg_filename, single_shape=False, scale=Scale(1., 1., 1.)), transform)
 
 
 def vector_to_cpp_code(vector):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import List, Union, Optional
 
@@ -15,16 +16,11 @@ from semantic_world.spatial_types.derivatives import Derivatives
 from semantic_world.spatial_types.symbol_manager import symbol_manager
 
 
+@dataclass
 class Goal(MotionStatechartNode):
-    tasks: List[Task]
-    monitors: List[Monitor]
-    goals: List[Goal]
-
-    def __init__(self, *, name: Optional[str] = None, plot: bool = True):
-        super().__init__(name=name, plot=plot)
-        self.tasks = []
-        self.monitors = []
-        self.goals = []
+    tasks: List[Task] = field(default_factory=list)
+    monitors: List[Monitor] = field(default_factory=list)
+    goals: List[Goal] = field(default_factory=list)
 
     @cached_property
     def observation_state_symbol(self) -> cas.Symbol:

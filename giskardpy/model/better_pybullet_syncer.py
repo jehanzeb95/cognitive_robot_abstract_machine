@@ -5,7 +5,7 @@ from line_profiler import profile
 
 from giskardpy.god_map import god_map
 from giskardpy.middleware import get_middleware
-from giskardpy.model.bpb_wrapper import create_shape_from_link, BPCollisionWrapper
+from giskardpy.model.bpb_wrapper import create_shape_from_link, create_collision
 from giskardpy.model.collision_detector import CollisionDetector, Collisions
 from giskardpy.model.collision_matrix_manager import CollisionCheck
 from semantic_world.prefixed_name import PrefixedName
@@ -17,17 +17,17 @@ class BulletCollisionDetector(CollisionDetector):
 
     def __init__(self, ):
         self.kw = bpb.KineverseWorld()
-        self.object_name_to_id: Dict[PrefixedName, bpb.CollisionObject] = {}
+        self.body_to_bpb_obj: Dict[Body, bpb.CollisionObject] = {}
         self.query: Optional[DefaultDict[PrefixedName, Set[Tuple[bpb.CollisionObject, float]]]] = None
         super().__init__()
 
     @profile
-    def add_object(self, link: Body):
-        if not link.has_collision():
+    def add_object(self, body: Body):
+        if not body.has_collision() or body.collision_config.disabled:
             return
-        o = create_shape_from_link(link)
+        o = create_shape_from_link(body)
         self.kw.add_collision_object(o)
-        self.object_name_to_id[link.name] = o
+        self.body_to_bpb_obj[body] = o
 
     def reset_cache(self):
         self.query = None
@@ -37,8 +37,8 @@ class BulletCollisionDetector(CollisionDetector):
                                    buffer: float = 0.05) -> DefaultDict[
         PrefixedName, Set[Tuple[bpb.CollisionObject, float]]]:
         if self.query is None:
-            self.query = {(self.object_name_to_id[check.body_a.name],
-                           self.object_name_to_id[check.body_b.name]): check.distance + buffer for check in
+            self.query = {(self.body_to_bpb_obj[check.body_a],
+                           self.body_to_bpb_obj[check.body_b]): check.distance + buffer for check in
                           collision_matrix}
         return self.query
 
@@ -76,7 +76,7 @@ class BulletCollisionDetector(CollisionDetector):
         collisions = Collisions(collision_list_size)
 
         for collision in result:
-            giskard_collision = BPCollisionWrapper(collision)
+            giskard_collision = create_collision(collision, god_map.world)
             collisions.add(giskard_collision)
         return collisions
 
@@ -91,17 +91,18 @@ class BulletCollisionDetector(CollisionDetector):
         get_middleware().logdebug('hard sync')
         for o in self.kw.collision_objects:
             self.kw.remove_collision_object(o)
-        self.object_name_to_id = {}
+        self.body_to_bpb_obj = {}
         self.objects_in_order = []
 
-        for link in sorted(god_map.world.bodies_with_collisions):
-            self.add_object(link)
-            self.objects_in_order.append(self.object_name_to_id[link.name])
+        for body in sorted(god_map.world.bodies_with_enabled_collision, key=lambda b: b.name):
+            self.add_object(body)
+            self.objects_in_order.append(self.body_to_bpb_obj[body])
 
     def sync_world_state(self) -> None:
-        bpb.batch_set_transforms(self.objects_in_order, god_map.world.compute_all_collision_fks())
+        bpb.batch_set_transforms(self.objects_in_order,
+                                 god_map.world.compute_forward_kinematics_of_all_collision_bodies())
 
     @profile
-    def get_map_T_geometry(self, body: PrefixedName, collision_id: int = 0):
-        collision_object = self.object_name_to_id[body]
+    def get_map_T_geometry(self, body: Body, collision_id: int = 0):
+        collision_object = self.body_to_bpb_obj[body]
         return collision_object.compound_transform(collision_id)

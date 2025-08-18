@@ -41,7 +41,7 @@ class PoseReached(Monitor):
                  name: Optional[str] = None):
         super().__init__(name=name)
         if absolute:
-            root_T_goal = god_map.world.transform(root_link, goal_pose)
+            root_T_goal = god_map.world.transform(target_frame=root_link, spatial_object=goal_pose)
         else:
             root_T_x = god_map.world.compose_fk_expression(root_link, goal_pose.reference_frame)
             root_T_goal = root_T_x.dot(goal_pose)
@@ -72,7 +72,7 @@ class PositionReached(Monitor):
                  name: Optional[str] = None):
         super().__init__(name=name)
         if absolute:
-            root_P_goal = god_map.world.transform(root_link, goal_point)
+            root_P_goal = god_map.world.transform(target_frame=root_link, spatial_object=goal_point)
         else:
             root_P_x = god_map.world.compose_fk_expression(root_link, goal_point.reference_frame)
             root_P_goal = root_P_x.dot(goal_point)
@@ -93,7 +93,7 @@ class OrientationReached(Monitor):
                  name: Optional[str] = None):
         super().__init__(name=name)
         if absolute:
-            r_R_g = god_map.world.transform(root_link, goal_orientation)
+            r_R_g = god_map.world.transform(target_frame=root_link, spatial_object=goal_orientation)
         else:
             root_T_x = god_map.world.compose_fk_expression(root_link, goal_orientation.reference_frame)
             root_R_goal = root_T_x.dot(goal_orientation)
@@ -115,9 +115,9 @@ class PointingAt(Monitor):
         super().__init__(name=name)
         self.root = root_link
         self.tip = tip_link
-        self.root_P_goal_point = god_map.world.transform(self.root, goal_point)
+        self.root_P_goal_point = god_map.world.transform(target_frame=self.root, spatial_object=goal_point)
 
-        tip_V_pointing_axis = god_map.world.transform(self.tip, pointing_axis)
+        tip_V_pointing_axis = god_map.world.transform(target_frame=self.tip, spatial_object=pointing_axis)
         tip_V_pointing_axis.scale(1)
         root_T_tip = god_map.world.compose_fk_expression(self.root, self.tip)
         root_P_tip = root_T_tip.to_position()
@@ -143,10 +143,10 @@ class VectorsAligned(Monitor):
         self.root = root_link
         self.tip = tip_link
 
-        self.tip_V_tip_normal = god_map.world.transform(self.tip, tip_normal)
+        self.tip_V_tip_normal = god_map.world.transform(target_frame=self.tip, spatial_object=tip_normal)
         self.tip_V_tip_normal.scale(1)
 
-        self.root_V_root_normal = god_map.world.transform(self.root, goal_normal)
+        self.root_V_root_normal = god_map.world.transform(target_frame=self.root, spatial_object=goal_normal)
         self.root_V_root_normal.scale(1)
 
         root_R_tip = god_map.world.compose_fk_expression(self.root, self.tip).to_rotation()
@@ -170,9 +170,9 @@ class DistanceToLine(Monitor):
         self.tip = tip_link
 
         root_P_current = god_map.world.compose_fk_expression(self.root, self.tip).to_position()
-        root_V_line_axis = god_map.world.transform(self.root, line_axis)
+        root_V_line_axis = god_map.world.transform(target_frame=self.root, spatial_object=line_axis)
         root_V_line_axis.scale(1)
-        root_P_center = god_map.world.transform(self.root, center_point)
+        root_P_center = god_map.world.transform(target_frame=self.root, spatial_object=center_point)
         root_P_line_start = root_P_center + root_V_line_axis * (line_length / 2)
         root_P_line_end = root_P_center - root_V_line_axis * (line_length / 2)
 

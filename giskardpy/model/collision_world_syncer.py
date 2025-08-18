@@ -59,7 +59,7 @@ class CollisionWorldSynchronizer:
         self.closest_points = self.collision_detector.check_collisions(collision_matrix)
         return self.closest_points
 
-    def is_collision_checking_enabled(self):
+    def is_collision_checking_enabled(self) -> bool:
         return not isinstance(self.collision_detector, NullCollisionDetector)
 
     # def reset_cache(self):

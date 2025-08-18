@@ -4,26 +4,42 @@ import copy
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
-from itertools import product, combinations_with_replacement
+from itertools import product, combinations_with_replacement, chain
 from typing import List, Dict, Optional, Tuple, Iterable, Set, DefaultDict, Callable
 
 import numpy as np
 from line_profiler import profile
 
+from giskardpy.data_types.key_default_dict import KeyDefaultDict
 from giskardpy.god_map import god_map
 from giskardpy.qp.free_variable import FreeVariable
 from semantic_world.connections import ActiveConnection
 from semantic_world.degree_of_freedom import DegreeOfFreedom
-from semantic_world.robots import AbstractRobot, CollisionConfig
+from semantic_world.robots import AbstractRobot
 from semantic_world.world import World
 from semantic_world.world_entity import Body
 
 
+def is_body_controlled(body: Body, world: World) -> bool:
+    root_part, tip_part = world.compute_split_chain_of_connections(world.root, body)
+    connections = root_part + tip_part
+    for c in connections:
+        if (isinstance(c, ActiveConnection)
+                and c.is_controlled
+                and not c.frozen_for_collision_avoidance):
+            return True
+    return False
+
+
 def sort_bodies(body_a: Body, body_b: Body) -> Tuple[Body, Body]:
-    if body_a.name < body_b.name:
-        return body_a, body_b
-    else:
-        return body_b, body_a
+    if body_a.name > body_b.name:
+        body_a, body_b = body_b, body_a
+    is_body_a_controlled = is_body_controlled(body_a, god_map.world)
+    is_body_b_controlled = is_body_controlled(body_b, god_map.world)
+    if (not is_body_a_controlled
+            and is_body_b_controlled):
+        body_a, body_b = body_b, body_a
+    return body_a, body_b
 
 
 @dataclass
@@ -31,16 +47,18 @@ class CollisionViewRequest:
     AVOID_COLLISION: int = field(default=0, init=False)
     ALLOW_COLLISION: int = field(default=1, init=False)
 
-    type_: int = AVOID_COLLISION
+    type_: Optional[int] = None
     distance: Optional[float] = None
     view1: Optional[AbstractRobot] = None
     view2: Optional[AbstractRobot] = None
 
     def __post_init__(self):
+        if self.type_ is None:
+            self.type_ = self.AVOID_COLLISION
         if self.view1 is None and self.view2 is not None:
             self.view1, self.view2 = self.view2, self.view1
         if self.distance is not None and self.distance < 0:
-            raise ValueError(f"Distance must be positive, got {self.distance}")
+            raise ValueError(f"Distance must be positive or None, got {self.distance}")
         if self.type_ not in [self.AVOID_COLLISION, self.ALLOW_COLLISION]:
             raise ValueError(f"Unknown type {self.type_}")
 
@@ -93,23 +111,26 @@ class CollisionCheck:
     def _validate(self, world: World) -> None:
         """Validates the collision check parameters."""
         if self.distance <= 0:
-            raise ValueError(f"Distance must be positive, got {self.distance}")
+            raise ValueError(f'Distance must be positive, got {self.distance}')
 
         if self.body_a == self.body_b:
-            raise ValueError("Cannot create collision check between the same body")
+            raise ValueError(f'Cannot create collision check between the same body "{self.body_a.name}"')
 
         if not self.body_a.has_collision():
-            raise ValueError(f"Body {self.body_a.name} has no collision geometry")
+            raise ValueError(f'Body {self.body_a.name} has no collision geometry')
 
         if not self.body_b.has_collision():
-            raise ValueError(f"Body {self.body_b.name} has no collision geometry")
+            raise ValueError(f'Body {self.body_b.name} has no collision geometry')
 
-        assert self.body_a in world.bodies_with_collisions
-        assert self.body_b in world.bodies_with_collisions
+        if self.body_a not in world.bodies_with_enabled_collision:
+            raise ValueError(f'Body {self.body_a.name} is not in list of bodies with collisions')
 
-        connections = world.compute_chain_of_connections(self.body_a, self.body_b)
-        if any(not isinstance(c, ActiveConnection) for c in connections):
-            raise ValueError(f"Relative pose between {self.body_a.name} and {self.body_b.name} is fixed")
+        if self.body_b not in world.bodies_with_enabled_collision:
+            raise ValueError(f'Body {self.body_b.name} is not in list of bodies with collisions')
+
+        root_chain, tip_chain = world.compute_split_chain_of_connections(self.body_a, self.body_b)
+        if all(not isinstance(c, ActiveConnection) for c in chain(root_chain, tip_chain)):
+            raise ValueError(f'Relative pose between {self.body_a.name} and {self.body_b.name} is fixed')
 
     @classmethod
     def create_and_validate(cls, body_a: Body, body_b: Body, distance: float,
@@ -133,7 +154,7 @@ class DisableCollisionReason(Enum):
 
 @dataclass
 class SelfCollisionMatrix:
-    collision_config: CollisionConfig
+    # collision_config: CollisionConfig
 
     @profile
     def compute_self_collision_matrix(self,
@@ -162,9 +183,9 @@ class SelfCollisionMatrix:
 
         # 0. GENERATE ALL POSSIBLE LINK PAIRS
         if body_combinations is None:
-            body_combinations = set(combinations_with_replacement(robot.bodies_with_collisions, 2))
+            body_combinations = set(combinations_with_replacement(robot.di, 2))
         for body_a, body_b in list(body_combinations):
-            remaining_pairs.add(CollisionConfig.sort_bodies(body_a, body_b))
+            remaining_pairs.add(sort_bodies(body_a, body_b))
 
         # %%
         remaining_pairs, matrix_updates = self.compute_self_collision_matrix_adjacent(remaining_pairs, robot)
@@ -250,8 +271,9 @@ class SelfCollisionMatrix:
             counts: DefaultDict[Tuple[Body, Body], int] = defaultdict(int)
             for try_id in range(int(number_of_tries)):
                 self.set_rnd_joint_state(robot)
-                for link_a, link_b, _ in god_map.collision_scene.collision_detector.find_colliding_combinations(remaining_pairs, distance_threshold_always,
-                                                                          True):
+                for link_a, link_b, _ in god_map.collision_scene.collision_detector.find_colliding_combinations(
+                        remaining_pairs, distance_threshold_always,
+                        True):
                     link_combination = sort_bodies(link_a, link_b)
                     counts[link_combination] += 1
             for link_combination, count in counts.items():
@@ -285,8 +307,9 @@ class SelfCollisionMatrix:
             once_without_contact = set()
             for try_id in range(int(number_of_tries)):
                 self.set_rnd_joint_state(robot)
-                contacts = god_map.collision_scene.collision_detector.find_colliding_combinations(remaining_pairs, distance_threshold_never_initial,
-                                                            update_query)
+                contacts = god_map.collision_scene.collision_detector.find_colliding_combinations(remaining_pairs,
+                                                                                                  distance_threshold_never_initial,
+                                                                                                  update_query)
                 update_query = False
                 contact_keys = set()
                 for link_a, link_b, distance in contacts:
@@ -362,42 +385,98 @@ class CollisionMatrixManager:
     world: World
     robots: Set[AbstractRobot]
 
-    # self_collision_matrices: List[SelfCollisionMatrix] = field(default_factory=list)
     added_checks: Set[CollisionCheck] = field(default_factory=set)
-    default_thresholds: Dict[CollisionCheck, CollisionCheck] = field(default_factory=dict)
-    """
-    I must use a dict which maps the things to themselves, because a set doesn't have a O(1) lookup to retrieve members.
-    """
+
     collision_requests: List[CollisionViewRequest] = field(default_factory=list)
-    disabled_bodies: Set[Body] = field(default_factory=set)
-    disabled_pairs: Set[Tuple[Body, Body]] = field(default_factory=set)
+    """
+    Motion goal specific requests for collision avoidance checks.
+    Can overwrite the thresholds and add additional disabled bodies/pairs.
+    """
+
+    # external_thresholds: Dict[Body, CollisionAvoidanceThreshold] = field(init=False)
+    # self_thresholds: Dict[Tuple[Body, Body], CollisionAvoidanceThreshold] = field(init=False)
+    # """
+    # Thresholds used for collision avoidance checks.
+    # They already include collision requests
+    # """
+
+    # disabled_bodies: Set[Body] = field(default_factory=set)
+    # disabled_pairs: Set[Tuple[Body, Body]] = field(default_factory=set)
+    # """
+    # Bodies disables for collision avoidance checks.
+    # Include collision configs for the robot and collision requests
+    # """
+
+    # def __post_init__(self):
+    #     self.compute_thresholds()
+    #     self.combine_collision_configs()
+
+    # def compute_thresholds(self):
+    #     def get_external_threshold(body: Body) -> CollisionAvoidanceThreshold:
+    #         for robot in self.robots:
+    #             # if body is part of the robot, use robot threshold
+    #             if body in robot.bodies_with_collisions:
+    #                 return robot.collision_config.external_avoidance_threshold[body]
+    #         raise KeyError(f'Could not find collision avoidance threshold for body "{body.name}". '
+    #                        f'Body is not part of any robot.')
+    #
+    #     self.external_thresholds = KeyDefaultDict(get_external_threshold)
+    #
+    #     def get_self_threshold(key: Tuple[Body, Body]) -> CollisionAvoidanceThreshold:
+    #         body_a, body_b = key
+    #         soft_a = body_a._collision_config.buffer_zone_distance
+    #         soft_b = body_b._collision_config.buffer_zone_distance
+    #         if soft_a is None and soft_b is None:
+    #             raise ValueError(f'Could not find collision avoidance threshold for body pair '
+    #                              f'"{body_a.name}", "{body_b.name}". '
+    #                              f'Neither body has a soft threshold set.')
+    #         if soft_a is None:
+    #             soft = soft_b
+    #         elif soft_b is None:
+    #             soft = soft_a
+    #         else:
+    #             soft = max(soft_a, soft_b)
+    #         return CollisionAvoidanceThreshold(
+    #             soft_threshold=soft,
+    #             hard_threshold=max(body_a._collision_config.violated_distance,
+    #                                body_b._collision_config.violated_distance))
+    #
+    #     self.self_thresholds = KeyDefaultDict(get_self_threshold)
+
+    # def combine_collision_configs(self):
+    #     for robot in self.robots:
+    #         self.disabled_pairs.update(robot.collision_config.disabled_pairs)
+    #         self.disabled_bodies.update(robot.collision_config.disabled_bodies)
 
     def compute_collision_matrix(self) -> Set[CollisionCheck]:
         """
-        Returns a list of body pairs for which collisions should be computed.
-        :return:
+        Parses the collision requrests and (temporary) collision configs in the world
+        to create a set of collision checks.
         """
         collision_matrix: Set[CollisionCheck] = set()
         for collision_request in self.collision_requests:
             if collision_request.any_view1():
-                group1_links = god_map.world.bodies_with_collisions
+                view_1_bodies = self.world.bodies_with_enabled_collision
             else:
-                group1_links = collision_request.view1.bodies_with_collisions
+                view_1_bodies = collision_request.view1.bodies_with_enabled_collision
             if collision_request.any_view2():
-                group2_links = god_map.world.bodies_with_collisions
+                view2_bodies = self.world.bodies_with_enabled_collision
             else:
-                group2_links = collision_request.view2.bodies_with_collisions
-            for link1 in group1_links:
-                if link1 in self.disabled_bodies:
-                    continue
-                for link2 in group2_links:
-                    if link2 in self.disabled_bodies:
+                view2_bodies = collision_request.view2.bodies_with_enabled_collision
+            disabled_pairs = self.world.disabled_collision_pairs
+            for body1 in view_1_bodies:
+                for body2 in view2_bodies:
+                    (robot_body, env_body) = sort_bodies(body1, body2)
+                    if (robot_body, env_body) in disabled_pairs:
                         continue
-                    if (link1, link2) in self.disabled_bodies:
-                        continue
-                    collision_check = CollisionCheck.create_and_validate(body_a=link1,
-                                                                         body_b=link2,
-                                                                         distance=collision_request.distance,
+                    if collision_request.distance is None:
+                        distance = max(robot_body.collision_config.buffer_zone_distance or 0.0,
+                                       env_body.collision_config.buffer_zone_distance or 0.0)
+                    else:
+                        distance = collision_request.distance
+                    collision_check = CollisionCheck.create_and_validate(body_a=robot_body,
+                                                                         body_b=env_body,
+                                                                         distance=distance,
                                                                          world=god_map.world)
                     if collision_request.is_allow_collision():
                         if collision_check in collision_matrix:
@@ -406,37 +485,36 @@ class CollisionMatrixManager:
                         if collision_request.is_distance_set():
                             collision_matrix.add(collision_check)
                         else:
-                            default_check = self.default_thresholds[collision_check]
-                            collision_matrix.add(default_check)
+                            collision_matrix.add(collision_check)
         return collision_matrix
 
-    def create_default_thresholds(self):
-        max_distances = {}
-        for robot_name in self.robot_names:
-            collision_avoidance_config = god_map.collision_scene.collision_avoidance_configs[robot_name]
-            external_distances = collision_avoidance_config.external_collision_avoidance
-            self_distances = collision_avoidance_config.self_collision_avoidance
-
-            # override max distances based on external distances dict
-            for robot in god_map.collision_scene.robots:
-                for body in robot.bodies_with_collisions:
-                    try:
-                        controlled_parent_joint = god_map.world.get_controlled_parent_joint_of_link(body)
-                    except KeyError as e:
-                        continue  # this happens when the root link of a robot has a collision model
-                    distance = external_distances[controlled_parent_joint].soft_threshold
-                    for child_link_name in god_map.world.get_directly_controlled_child_links_with_collisions(
-                            controlled_parent_joint):
-                        max_distances[child_link_name] = distance
-
-            for link_name in self_distances:
-                distance = self_distances[link_name].soft_threshold
-                if link_name in max_distances:
-                    max_distances[link_name] = max(distance, max_distances[link_name])
-                else:
-                    max_distances[link_name] = distance
-
-        return max_distances
+    # def create_default_thresholds(self):
+    #     max_distances = {}
+    #     for robot_name in self.robot_names:
+    #         collision_avoidance_config = god_map.collision_scene.collision_avoidance_configs[robot_name]
+    #         external_distances = collision_avoidance_config.external_collision_avoidance
+    #         self_distances = collision_avoidance_config.self_collision_avoidance
+    #
+    #         # override max distances based on external distances dict
+    #         for robot in god_map.collision_scene.robots:
+    #             for body in robot.bodies_with_collisions:
+    #                 try:
+    #                     controlled_parent_joint = god_map.world.get_controlled_parent_joint_of_link(body)
+    #                 except KeyError as e:
+    #                     continue  # this happens when the root link of a robot has a collision model
+    #                 distance = external_distances[controlled_parent_joint].buffer_zone_distance
+    #                 for child_link_name in god_map.world.get_directly_controlled_child_links_with_collisions(
+    #                         controlled_parent_joint):
+    #                     max_distances[child_link_name] = distance
+    #
+    #         for link_name in self_distances:
+    #             distance = self_distances[link_name].buffer_zone_distance
+    #             if link_name in max_distances:
+    #                 max_distances[link_name] = max(distance, max_distances[link_name])
+    #             else:
+    #                 max_distances[link_name] = distance
+    #
+    #     return max_distances
 
     def add_collision_check(self, body_a: Body, body_b: Body, distance: float):
         """
@@ -470,48 +548,46 @@ class CollisionMatrixManager:
             # put an avoid all at the front
             collision_goal = CollisionViewRequest()
             collision_goal.type_ = CollisionViewRequest.AVOID_COLLISION
-            collision_goal.distance = -1
+            collision_goal.distance = None
             collision_goals.insert(0, collision_goal)
 
         self.collision_requests = collision_goals
 
     def apply_world_model_updates(self) -> None:
-        if not god_map.collision_scene.is_collision_checking_enabled():
-            return
-        self.self_collision_matrices = []
-        for robot in self.robots:
-            attached_links = [link for link in robot.bodies_with_collisions
-                              if (link, link) not in robot.collision_config.disabled_pairs]
-            body_combinations = set(product(attached_links, robot.bodies_with_collisions))
-            scm = SelfCollisionMatrix(collision_config=robot.collision_config)
-            if body_combinations:
-                disabled_pairs = scm.compute_self_collision_matrix(body_combinations=body_combinations)
-                robot.collision_config.disabled_pairs.update(disabled_pairs)
-        # self.blacklist_inter_group_collisions()
+        # self.update_self_collision_matrices_for_attached_bodies()
+        # self.disable_non_robot_collisions()
+        # self.disable_env_with_unmovable_bodies()
+        pass
 
-    # def blacklist_inter_group_collisions(self) -> None:
-    #     for group_a_name, group_b_name in combinations(god_map.world.minimal_group_names, 2):
-    #         one_group_is_robot = group_a_name in self.robot_names or group_b_name in self.robot_names
-    #         if one_group_is_robot:
-    #             if group_a_name in self.robot_names:
-    #                 robot_group = god_map.world.groups[group_a_name]
-    #                 other_group = god_map.world.groups[group_b_name]
-    #             else:
-    #                 robot_group = god_map.world.groups[group_b_name]
-    #                 other_group = god_map.world.groups[group_a_name]
-    #             unmovable_links = robot_group.get_unmovable_links()
-    #             if len(unmovable_links) > 0:  # ignore collisions between unmovable links of the robot and the env
-    #                 for link_a, link_b in product(unmovable_links,
-    #                                               other_group.link_names_with_collisions):
-    #                     self.self_collision_matrix[
-    #                         god_map.world.sort_links(link_a, link_b)] = DisableCollisionReason.Unknown
-    #             continue
-    #         # disable all collisions of groups that aren't a robot
-    #         group_a: AbstractRobot = god_map.world.get_view_by_name(group_a_name)
-    #         group_b: AbstractRobot = god_map.world.get_view_by_name(group_b_name)
-    #         for link_a, link_b in product(group_a.bodies_with_collisions, group_b.bodies_with_collisions):
-    #             self.self_collision_matrix[god_map.world.sort_links(link_a, link_b)] = DisableCollisionReason.Unknown
-    #     # disable non actuated groups
+    # def update_self_collision_matrices_for_attached_bodies(self):
+    #     for robot in self.robots:
+    #         attached_links = [link for link in robot.bodies_with_collisions
+    #                           if (link, link) not in robot.collision_config.disabled_pairs]
+    #         body_combinations = set(product(attached_links, robot.bodies_with_collisions))
+    #         scm = SelfCollisionMatrix(collision_config=robot.collision_config)
+    #         if body_combinations:
+    #             disabled_pairs = scm.compute_self_collision_matrix(body_combinations=body_combinations)
+    #             robot.collision_config.disabled_pairs.update(disabled_pairs)
+
+
+
+    def get_non_robot_bodies(self) -> Set[Body]:
+        return set(self.world.bodies_with_enabled_collision).difference(self.get_robot_bodies())
+
+    def get_robot_bodies(self) -> Set[Body]:
+        robot_bodies = set()
+        for robot in self.robots:
+            robot_bodies.update(robot.bodies_with_enabled_collision)
+        return robot_bodies
+
+    # def disable_env_with_unmovable_bodies(self) -> None:
+    #     for robot in self.robots:
+    #         for body_a in robot.unmovable_bodies_with_collision:
+    #             for body_b in self.get_non_robot_bodies():
+    #                 body_a, body_b = sort_bodies(body_a, body_b)
+    #                 self.disabled_pairs.add((body_a, body_b))
+
+    # def disable_non
     #     for group in god_map.world.groups.values():
     #         if group.name not in self.robot_names:
     #             for link_a, link_b in set(combinations_with_replacement(group.link_names_with_collisions, 2)):

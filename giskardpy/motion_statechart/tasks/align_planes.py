@@ -36,10 +36,10 @@ class AlignPlanes(Task):
         self.reference_velocity = reference_velocity
         self.weight = weight
 
-        self.tip_V_tip_normal = god_map.world.transform(self.tip, tip_normal)
+        self.tip_V_tip_normal = god_map.world.transform(target_frame=self.tip, spatial_object=tip_normal)
         self.tip_V_tip_normal.scale(1)
 
-        self.root_V_root_normal = god_map.world.transform(self.root, goal_normal)
+        self.root_V_root_normal = god_map.world.transform(target_frame=self.root, spatial_object=goal_normal)
         self.root_V_root_normal.scale(1)
 
         if name is None:

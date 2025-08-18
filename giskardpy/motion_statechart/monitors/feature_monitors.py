@@ -17,8 +17,8 @@ class FeatureMonitor(Monitor):
         self.root = root_link
         self.tip = tip_link
 
-        root_reference_feature = god_map.world.transform(self.root, reference_feature)
-        tip_controlled_feature = god_map.world.transform(self.tip, controlled_feature)
+        root_reference_feature = god_map.world.transform(target_frame=self.root, spatial_object=reference_feature)
+        tip_controlled_feature = god_map.world.transform(target_frame=self.tip, spatial_object=controlled_feature)
 
         root_T_tip = god_map.world.compose_fk_expression(self.root, self.tip)
         if isinstance(controlled_feature, cas.Point3):

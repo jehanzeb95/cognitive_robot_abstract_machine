@@ -33,12 +33,12 @@ class Pointing(Task):
         self.max_velocity = max_velocity
         self.root = root_link
         self.tip = tip_link
-        self.root_P_goal_point = god_map.world.transform(self.root, goal_point).to_np()
+        self.root_P_goal_point = god_map.world.transform(target_frame=self.root, spatial_object=goal_point).to_np()
         if name is None:
             name = f'{self.__class__.__name__}/{self.root}/{self.tip}'
         super().__init__(name=name)
 
-        self.tip_V_pointing_axis = god_map.world.transform(self.tip, pointing_axis)
+        self.tip_V_pointing_axis = god_map.world.transform(target_frame=self.tip, spatial_object=pointing_axis)
         self.tip_V_pointing_axis.scale(1)
 
         root_T_tip = god_map.world.compose_fk_expression(self.root, self.tip)
@@ -92,12 +92,12 @@ class PointingCone(Task):
         self.max_velocity = max_velocity
         self.root = root_link
         self.tip = tip_link
-        self.root_P_goal_point = god_map.world.transform(self.root, goal_point).to_np()
+        self.root_P_goal_point = god_map.world.transform(target_frame=self.root, spatial_object=goal_point).to_np()
         if name is None:
             name = f'{self.__class__.__name__}/{self.root}/{self.tip}'
         super().__init__(name=name)
 
-        self.tip_V_pointing_axis = god_map.world.transform(self.tip, pointing_axis)
+        self.tip_V_pointing_axis = god_map.world.transform(target_frame=self.tip, spatial_object=pointing_axis)
         self.tip_V_pointing_axis.scale(1)
 
         root_T_tip = god_map.world.compose_fk_expression(self.root, self.tip)

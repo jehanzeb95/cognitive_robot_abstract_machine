@@ -1,53 +1,61 @@
+import copy
 from collections import defaultdict
 from copy import deepcopy
-from typing import Dict, Optional, List
+from dataclasses import dataclass, field
+from typing import Dict, Optional, List, Tuple
 import semantic_world.spatial_types.spatial_types as cas
 from giskardpy.model.collision_matrix_manager import CollisionViewRequest
 from giskardpy.motion_statechart.goals.goal import Goal
 from giskardpy.motion_statechart.monitors.monitors import Monitor
 from giskardpy.motion_statechart.tasks.task import WEIGHT_ABOVE_CA, WEIGHT_COLLISION_AVOIDANCE, Task
 from giskardpy.god_map import god_map
+from semantic_world.connections import ActiveConnection
 from semantic_world.prefixed_name import PrefixedName
+from semantic_world.robots import AbstractRobot
 from semantic_world.spatial_types.symbol_manager import symbol_manager
 from giskardpy.middleware import get_middleware
 from line_profiler import profile
 
+from semantic_world.world import World
+from semantic_world.world_entity import Body
 
+
+@dataclass
 class ExternalCA(Goal):
+    name: str = field(kw_only=True, default=None)
+    connection: ActiveConnection = field(kw_only=True)
+    main_body: Body = field(init=False, default=None)
+    # robot: AbstractRobot  = field(kw_only=True)
+    max_velocity: float = field(default=0.2, kw_only=True)
+    world: World = field(kw_only=True)
+    # hard_threshold: float = field(default=0.0, kw_only=True)
+    # name_prefix: Optional[str] = field(default=None, kw_only=True)
+    # soft_thresholds: Optional[Dict[PrefixedName, float]] = field(default=None, kw_only=True)
+    idx: int = field(default=0, kw_only=True)
+    max_avoided_bodies: int = field(default=1, kw_only=True)
 
-    def __init__(self,
-                 link_name: PrefixedName,
-                 robot_name: str,
-                 max_velocity: float = 0.2,
-                 hard_threshold: float = 0.0,
-                 name_prefix: Optional[str] = None,
-                 soft_thresholds: Optional[Dict[PrefixedName, float]] = None,
-                 idx: int = 0,
-                 num_repeller: int = 1):
+    def __post_init__(self):
         """
         Don't use me
         """
-        self.max_velocity = max_velocity
-        self.hard_threshold = hard_threshold
-        self.soft_thresholds = soft_thresholds
-        self.num_repeller = num_repeller
-        self.link_name = link_name
-        self.idx = idx
-        name = f'{name_prefix}/{self.__class__.__name__}/{self.link_name}/{self.idx}'
-        super().__init__(name=name, plot=False)
-        self.root = god_map.world.root_link_name
-        self.robot_name = robot_name
-        self.control_horizon = god_map.qp_controller.prediction_horizon - (
-                god_map.qp_controller.max_derivative - 1)
+        self._plot = False
+        self.name = f'{self.__class__.__name__}/{self.connection.name}/{self.idx}'
+        self.main_body = self.connection.child
+        self.control_horizon = god_map.qp_controller.config.prediction_horizon - (
+                    god_map.qp_controller.config.max_derivative - 1)
         self.control_horizon = max(1, self.control_horizon)
+        # threshold = copy.copy(self.robot.collision_config.external_avoidance_threshold[self.main_body])
+        # for body in self.robot.get_directly_child_bodies_with_collision(self.connection):
+        #     threshold.soft_threshold =
 
+        self.root = self.world.root
         a_P_pa = self.get_closest_point_on_a_in_a()
         map_V_n = self.map_V_n_symbol()
         actual_distance = self.get_actual_distance()
-        sample_period = god_map.qp_controller.mpc_dt
+        sample_period = god_map.qp_controller.config.mpc_dt
         number_of_external_collisions = self.get_number_of_external_collisions()
 
-        map_T_a = god_map.world.compose_fk_expression(self.root, self.link_name)
+        map_T_a = self.world.compose_forward_kinematics_expression(self.root, self.main_body)
 
         map_P_pa = map_T_a.dot(a_P_pa)
 
@@ -56,17 +64,27 @@ class ExternalCA(Goal):
 
         qp_limits_for_lba = self.max_velocity * sample_period * self.control_horizon
 
-        soft_threshold = 0
+        # soft_threshold = 0
         actual_link_b_hash = self.get_link_b_hash()
-        parent_joint = god_map.world.links[self.link_name].parent_joint_name
-        direct_children = set(god_map.world.get_directly_controlled_child_links_with_collisions(parent_joint))
-        b_result_cases = {(k[1].__hash__(), v) for k, v in self.soft_thresholds.items() if k[0] in direct_children}
-        soft_threshold = cas.if_eq_cases(a=actual_link_b_hash,
-                                         b_result_cases=b_result_cases,
-                                         else_result=soft_threshold)
+        direct_children = self.world.get_directly_child_bodies_with_collision(self.connection)
 
-        hard_threshold = cas.min(self.hard_threshold, soft_threshold / 2)
-        lower_limit = soft_threshold - actual_distance
+        buffer_zone = max(b.collision_config.buffer_zone_distance for b in direct_children)
+        violated_distance = max(b.collision_config.violated_distance for b in direct_children)
+        b_result_cases = {}
+        for body in self.world.bodies_with_enabled_collision:
+            if body.collision_config.buffer_zone_distance is None:
+                continue
+            if body.collision_config.disabled:
+                continue
+            if body.collision_config.buffer_zone_distance > buffer_zone:
+                b_result_cases[body.__hash__()] = body.collision_config.buffer_zone_distance
+
+        buffer_zone_expr = cas.if_eq_cases(a=actual_link_b_hash,
+                                           b_result_cases=b_result_cases,
+                                           else_result=buffer_zone)
+
+        hard_threshold = cas.min(violated_distance, buffer_zone_expr / 2)
+        lower_limit = buffer_zone_expr - actual_distance
 
         lower_limit_limited = cas.limit(lower_limit,
                                         -qp_limits_for_lba,
@@ -95,11 +113,11 @@ class ExternalCA(Goal):
         # weight = cas.if_greater(actual_distance, 50, 0, WEIGHT_COLLISION_AVOIDANCE)
 
         weight = cas.save_division(WEIGHT_COLLISION_AVOIDANCE,  # divide by number of active repeller per link
-                                   cas.min(number_of_external_collisions, self.num_repeller))
-        distance_monitor = Monitor(name=f'collision distance {self.name}', plot=False)
+                                   cas.min(number_of_external_collisions, self.max_avoided_bodies))
+        distance_monitor = Monitor(name=f'collision distance {self.name}', _plot=False)
         distance_monitor.observation_expression = cas.greater(actual_distance, 50)
         self.add_monitor(distance_monitor)
-        task = Task(name=self.name + '/task', plot=False)
+        task = Task(name=self.name + '/task', _plot=False)
         self.add_task(task)
         task.plot = False
         task.pause_condition = distance_monitor
@@ -112,46 +130,39 @@ class ExternalCA(Goal):
                                        upper_slack_limit=upper_slack)
 
     def map_V_n_symbol(self):
-        return god_map.collision_scene.external_map_V_n_symbol(self.link_name, self.idx)
+        return god_map.collision_scene.external_map_V_n_symbol(self.main_body, self.idx)
 
     def get_closest_point_on_a_in_a(self):
-        return god_map.collision_scene.external_new_a_P_pa_symbol(self.link_name, self.idx)
+        return god_map.collision_scene.external_new_a_P_pa_symbol(self.main_body, self.idx)
 
     def get_actual_distance(self):
-        return god_map.collision_scene.external_contact_distance_symbol(self.link_name, self.idx)
+        return god_map.collision_scene.external_contact_distance_symbol(self.main_body, self.idx)
 
     def get_link_b_hash(self):
-        return god_map.collision_scene.external_link_b_hash_symbol(self.link_name, self.idx)
+        return god_map.collision_scene.external_link_b_hash_symbol(self.main_body, self.idx)
 
     def get_number_of_external_collisions(self):
-        return god_map.collision_scene.external_number_of_collisions_symbol(self.link_name)
+        return god_map.collision_scene.external_number_of_collisions_symbol(self.main_body)
 
 
+@dataclass
 class SelfCA(Goal):
+    link_a: PrefixedName = field(kw_only=True)
+    link_b: PrefixedName = field(kw_only=True)
+    robot_name: str = field(kw_only=True)
+    max_velocity: float = field(default=0.2, kw_only=True)
+    hard_threshold: float = field(default=0.0, kw_only=True)
+    name_prefix: Optional[str] = field(default=None, kw_only=True)
+    soft_threshold: float = field(default=0.05, kw_only=True)
+    idx: int = field(default=0, kw_only=True)
+    num_repeller: int = field(default=1, kw_only=True)
 
-    def __init__(self,
-                 link_a: PrefixedName,
-                 link_b: PrefixedName,
-                 robot_name: str,
-                 max_velocity: float = 0.2,
-                 hard_threshold: float = 0.0,
-                 soft_threshold: float = 0.05,
-                 idx: float = 0,
-                 num_repeller: int = 1,
-                 name_prefix: Optional[str] = None):
-        self.link_a = link_a
-        self.link_b = link_b
-        self.max_velocity = max_velocity
-        self.hard_threshold = hard_threshold
-        self.soft_threshold = soft_threshold
-        self.num_repeller = num_repeller
-        self.idx = idx
+    def __post_init__(self):
+        self._plot = False
         if self.link_a.prefix != self.link_b.prefix:
             raise Exception(f'Links {self.link_a} and {self.link_b} have different prefix.')
-        name = f'{name_prefix}/{self.__class__.__name__}/{self.link_a}/{self.link_b}/{self.idx}'
-        super().__init__(name=name, plot=False)
+        self.name = f'{self.name_prefix}/{self.__class__.__name__}/{self.link_a}/{self.link_b}/{self.idx}'
         self.root = god_map.world.root_link_name
-        self.robot_name = robot_name
         self.control_horizon = god_map.qp_controller.prediction_horizon - (
                 god_map.qp_controller.max_derivative - 1)
         self.control_horizon = max(1, self.control_horizon)
@@ -193,10 +204,10 @@ class SelfCA(Goal):
 
         weight = cas.save_division(WEIGHT_COLLISION_AVOIDANCE,  # divide by number of active repeller per link
                                    cas.min(number_of_self_collisions, self.num_repeller))
-        distance_monitor = Monitor(name=f'collision distance {self.name}', plot=False)
+        distance_monitor = Monitor(name=f'collision distance {self.name}', _plot=False)
         distance_monitor.observation_expression = cas.greater(actual_distance, 50)
         self.add_monitor(distance_monitor)
-        task = Task(name=self.name + '/task', plot=False)
+        task = Task(name=self.name + '/task', _plot=False)
         self.add_task(task)
         task.plot = False
         task.pause_condition = distance_monitor
@@ -270,7 +281,7 @@ class CollisionAvoidanceHint(Goal):
                                                     god_map.world.links[self.link_b].name,
                                                     spring_threshold)
 
-        self.avoidance_hint = god_map.world.transform(self.root_link, avoidance_hint)
+        self.avoidance_hint = god_map.world.transform(target_frame=self.root_link, spatial_object=avoidance_hint)
         self.avoidance_hint.scale(1)
 
         self.max_velocity = max_linear_velocity
@@ -325,69 +336,83 @@ class CollisionAvoidanceHint(Goal):
 # avoid all then allow something
 # avoid only something
 
+@dataclass
 class CollisionAvoidance(Goal):
-    sub_goals = {}
+    collision_entries: List[CollisionViewRequest] = field(default_factory=list)
 
-    def __init__(self,
-                 collision_entries: List[CollisionViewRequest],
-                 name: Optional[str] = None):
-        if name is None:
-            name = self.__class__.__name__
-        super().__init__(name=name)
-        self.collision_matrix = god_map.collision_scene.create_collision_matrix(deepcopy(collision_entries))
-        if not collision_entries or not god_map.collision_scene.is_allow_all_collision(collision_entries[-1]):
-            self.add_external_collision_avoidance_constraints(soft_threshold_override=self.collision_matrix)
-        if not collision_entries or (not god_map.collision_scene.is_allow_all_collision(collision_entries[-1]) and
-                                     not god_map.collision_scene.is_allow_all_self_collision(collision_entries[-1])):
-            self.add_self_collision_avoidance_constraints()
+    def __post_init__(self):
+        if self.name is None:
+            self.name = self.__class__.__name__
+        god_map.collision_scene.matrix_manager.parse_collision_requests(deepcopy(self.collision_entries))
+        self.collision_entries = god_map.collision_scene.matrix_manager.collision_requests
+        if not self.collision_entries or not self.collision_entries[-1].is_allow_all_collision():
+            self.add_external_collision_avoidance_constraints()
+        # if not self.collision_entries or (not self.collision_entries[-1].is_allow_all_collision() and
+        #                              not self.collision_entries[-1].is_allow_all_self_collision()):
+        #     self.add_self_collision_avoidance_constraints()
         # if not cas.is_true_symbol(start_condition):
         #     payload_monitor = CollisionMatrixUpdater(name=f'{self.name}/update collision matrix',
         #                                              start_condition=start_condition,
         #                                              new_collision_matrix=self.collision_matrix)
         #     god_map.motion_statechart_manager.add_monitor(payload_monitor)
         # else:
-        god_map.collision_scene.set_collision_matrix(self.collision_matrix)
+        # god_map.collision_scene.set_collision_matrix(self.collision_matrix)
 
     def _task_sanity_check(self):
         pass
 
     @profile
-    def add_external_collision_avoidance_constraints(self, soft_threshold_override=None):
-        configs = god_map.collision_scene.collision_avoidance_configs
-        fixed_joints = god_map.collision_scene.frozen_connections
-        joints = [j for j in god_map.world.controlled_joints if j not in fixed_joints]
-        num_constrains = 0
-        for joint_name in joints:
-            try:
-                robot_name = god_map.world.get_group_of_joint(joint_name).name
-            except KeyError:
-                child_link = god_map.world.joints[joint_name].child_link_name
-                robot_name = god_map.world.get_group_name_containing_link(child_link)
-            child_links = god_map.world.get_directly_controlled_child_links_with_collisions(joint_name, fixed_joints)
-            if child_links:
-                number_of_repeller = configs[robot_name].external_collision_avoidance[joint_name].number_of_repeller
-                for i in range(number_of_repeller):
-                    child_link = god_map.world.joints[joint_name].child_link_name
-                    hard_threshold = configs[robot_name].external_collision_avoidance[joint_name].hard_threshold
-                    if soft_threshold_override is not None:
-                        soft_threshold = soft_threshold_override
-                    else:
-                        soft_threshold = configs[robot_name].external_collision_avoidance[joint_name].soft_threshold
-                    ca_goal = ExternalCA(robot_name=robot_name,
-                                         link_name=child_link,
-                                         name_prefix=self.name,
-                                         hard_threshold=hard_threshold,
-                                         soft_thresholds=soft_threshold,
-                                         idx=i,
-                                         num_repeller=number_of_repeller)
-                    self.add_goal(ca_goal)
-                    num_constrains += 1
-        get_middleware().loginfo(f'Adding {num_constrains} external collision avoidance constraints.')
+    def add_external_collision_avoidance_constraints(self):
+        robot: AbstractRobot
+        # thresholds = god_map.collision_scene.matrix_manager.external_thresholds
+        for robot in god_map.world.search_for_views_of_type(AbstractRobot):
+            for connection in robot.controlled_connections:
+                if connection in god_map.world.frozen_connections:
+                    continue
+                bodies = god_map.world.get_directly_child_bodies_with_collision(connection)
+                if not bodies:
+                    continue
+                max_avoided_bodies = 0
+                for body in bodies:
+                    max_avoided_bodies = max(max_avoided_bodies, body.collision_config.max_avoided_bodies)
+                for idx in range(max_avoided_bodies):
+                    self.add_goal(ExternalCA(connection=connection,
+                                             world=god_map.world,
+                                             idx=idx,
+                                             max_avoided_bodies=max_avoided_bodies))
+
+        # configs = god_map.collision_scene.collision_avoidance_configs
+        # fixed_joints = god_map.collision_scene.frozen_connections
+        # joints = [j for j in god_map.world.controlled_joints if j not in fixed_joints]
+        # num_constrains = 0
+        # god_map.collision_scene.matrix_manager.combine_collision_configs()
+        # for joint_name in joints:
+        #     try:
+        #         robot_name = god_map.world.get_group_of_joint(joint_name).name
+        #     except KeyError:
+        #         child_link = god_map.world.joints[joint_name].child_link_name
+        #         robot_name = god_map.world.get_group_name_containing_link(child_link)
+        #     child_links = god_map.world.get_directly_controlled_child_links_with_collisions(joint_name, fixed_joints)
+        #     if child_links:
+        #         number_of_repeller = configs[robot_name].external_collision_avoidance[joint_name].number_of_repeller
+        #         for i in range(number_of_repeller):
+        #             child_link = god_map.world.joints[joint_name].child_link_name
+        #             hard_threshold = configs[robot_name].external_collision_avoidance[joint_name].hard_threshold
+        #             if soft_threshold_override is not None:
+        #                 soft_threshold = soft_threshold_override
+        #             else:
+        #                 soft_threshold = configs[robot_name].external_collision_avoidance[joint_name].soft_threshold
+        #             ca_goal = ExternalCA(connection=0,
+        #                                  robot=0,
+        #                                  thresholds=)
+        #             self.add_goal(ca_goal)
+        #             num_constrains += 1
+        # get_middleware().loginfo(f'Adding {num_constrains} external collision avoidance constraints.')
 
     @profile
     def add_self_collision_avoidance_constraints(self):
         counter = defaultdict(int)
-        fixed_joints = god_map.collision_scene.frozen_connections
+        fixed_joints = god_map.world.frozen_connections
         configs = god_map.collision_scene.collision_avoidance_configs
         num_constr = 0
         for robot_name in god_map.collision_scene.robot_names:
@@ -416,20 +441,20 @@ class CollisionAvoidance(Goal):
                 key_r = f'{link_b}, {link_a}'
                 config = configs[group_name].self_collision_avoidance
                 if key in config:
-                    hard_threshold = config[key].hard_threshold
-                    soft_threshold = config[key].soft_threshold
+                    hard_threshold = config[key].violated_distance
+                    soft_threshold = config[key].buffer_zone_distance
                     number_of_repeller = config[key].number_of_repeller
                 elif key_r in config:
-                    hard_threshold = config[key_r].hard_threshold
-                    soft_threshold = config[key_r].soft_threshold
+                    hard_threshold = config[key_r].violated_distance
+                    soft_threshold = config[key_r].buffer_zone_distance
                     number_of_repeller = config[key_r].number_of_repeller
                 else:
                     # TODO minimum is not the best if i reduce to the links next to the controlled chains
                     #   should probably add symbols that retrieve the values for the current pair
-                    hard_threshold = min(config[link_a].hard_threshold,
-                                         config[link_b].hard_threshold)
-                    soft_threshold = min(config[link_a].soft_threshold,
-                                         config[link_b].soft_threshold)
+                    hard_threshold = min(config[link_a].violated_distance,
+                                         config[link_b].violated_distance)
+                    soft_threshold = min(config[link_a].buffer_zone_distance,
+                                         config[link_b].buffer_zone_distance)
                     number_of_repeller = min(config[link_a].number_of_repeller,
                                              config[link_b].number_of_repeller)
                 groups_a = god_map.world.get_group_name_containing_link(link_a)

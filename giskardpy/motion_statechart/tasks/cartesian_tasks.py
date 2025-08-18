@@ -38,7 +38,7 @@ class CartesianPosition(Task):
         self.reference_velocity = reference_velocity
         self.weight = weight
         if absolute:
-            root_P_goal = god_map.world.transform(self.root_link, goal_point)
+            root_P_goal = god_map.world.transform(target_frame=self.root_link, spatial_object=goal_point)
         else:
             root_T_x = god_map.world.compose_fk_expression(self.root_link, goal_point.reference_frame)
             root_P_goal = root_T_x.dot(goal_point)
@@ -99,7 +99,7 @@ class CartesianPositionStraight(Task):
         self.threshold = threshold
 
         if absolute:
-            root_P_goal = god_map.world.transform(self.root_link, goal_point)
+            root_P_goal = god_map.world.transform(target_frame=self.root_link, spatial_object=goal_point)
         else:
             root_T_x = god_map.world.compose_fk_expression(self.root_link, goal_point.reference_frame)
             root_P_goal = root_T_x.dot(goal_point)
@@ -172,7 +172,7 @@ class CartesianOrientation(Task):
         self.weight = weight
 
         if absolute:
-            root_R_goal = god_map.world.transform(self.root_link, goal_orientation)
+            root_R_goal = god_map.world.transform(target_frame=self.root_link, spatial_object=goal_orientation)
         else:
             root_T_x = god_map.world.compose_fk_expression(self.root_link, goal_orientation.reference_frame)
             root_R_goal = root_T_x.dot(goal_orientation)

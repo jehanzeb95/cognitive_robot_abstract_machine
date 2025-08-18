@@ -92,7 +92,7 @@ class WiggleInsert(Task):
         self.v2 = cas.Vector3().from_xyz(*v2, reference_frame=hole_normal.reference_frame)
 
         r_P_c = god_map.world.compose_fk_expression(self.root_link, self.tip_link).to_position()
-        r_P_g = god_map.world.transform(self.root_link, hole_point)
+        r_P_g = god_map.world.transform(target_frame=self.root_link, spatial_object=hole_point)
 
         rand_v = symbol_manager.get_expr(self.ref_str +
                                          vector_function,
@@ -112,7 +112,7 @@ class WiggleInsert(Task):
                                         input_type_hint=float,
                                         output_type_hint=cas.Symbol)
 
-        tip_V_hole_normal = god_map.world.transform(self.tip_link, self.hole_normal)
+        tip_V_hole_normal = god_map.world.transform(target_frame=self.tip_link, spatial_object=self.hole_normal)
         tip_R_hole_normal = cas.RotationMatrix.from_axis_angle(angle=angle,
                                                                axis=tip_V_hole_normal)
         root_R_hole_normal = god_map.world.compute_fk(self.root_link, self.tip_link).dot(tip_R_hole_normal)
