@@ -53,7 +53,7 @@ class DiffDriveTangentialToPoint(Task):
             # angle = cas.abs(cas.angle_between_vector(cas.vector3(1,0,0), map_V_tangent))
             map_R_goal = cas.RotationMatrix.from_vectors(x=map_V_tangent, y=None, z=cas.Vector3((0, 0, 1)))
             goal_angle = map_R_goal.to_angle(lambda axis: axis[2])
-            map_R_base = map_T_base.to_rotation()
+            map_R_base = map_T_base.to_rotation_matrix()
             axis, map_current_angle = map_R_base.to_axis_angle()
             map_current_angle = cas.if_greater_zero(axis[2], map_current_angle, -map_current_angle)
             angle_error = cas.shortest_angular_distance(map_current_angle, goal_angle)

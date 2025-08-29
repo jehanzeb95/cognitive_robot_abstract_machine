@@ -95,8 +95,8 @@ class DiffDriveBaseGoal(Goal):
 
         map_T_base_current = god_map.world.compute_fk(self.map, self.base_footprint)
         map_T_odom_current = god_map.world.compute_fk(self.map, self.odom)
-        _, map_odom_angle = map_T_odom_current.to_rotation().to_axis_angle()
-        map_R_base_current = map_T_base_current.to_rotation()
+        _, map_odom_angle = map_T_odom_current.to_rotation_matrix().to_axis_angle()
+        map_R_base_current = map_T_base_current.to_rotation_matrix()
         axis_start, angle_start = map_R_base_current.to_axis_angle()
         angle_start = cas.if_greater_zero(axis_start[2], angle_start, -angle_start)
 
@@ -105,7 +105,7 @@ class DiffDriveBaseGoal(Goal):
         # map_R_base_footprint = map_T_base_footprint.to_rotation()
         map_T_base_footprint_goal = self.goal_pose
         map_P_base_footprint_goal = map_T_base_footprint_goal.to_position()
-        map_R_base_footprint_goal = map_T_base_footprint_goal.to_rotation()
+        map_R_base_footprint_goal = map_T_base_footprint_goal.to_rotation_matrix()
 
         map_V_goal_x = map_P_base_footprint_goal - map_P_base_footprint
         distance = map_V_goal_x.norm()
@@ -204,7 +204,7 @@ class CartesianPoseStraight(Goal):
         self.add_task(CartesianOrientation(root_link=root_link,
                                            tip_link=tip_link,
                                            name=name + '/rot',
-                                           goal_orientation=goal_pose.to_rotation(),
+                                           goal_orientation=goal_pose.to_rotation_matrix(),
                                            reference_velocity=reference_angular_velocity,
                                            absolute=absolute,
                                            weight=weight,

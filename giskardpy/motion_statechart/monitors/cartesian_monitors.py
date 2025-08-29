@@ -54,8 +54,8 @@ class PoseReached(Monitor):
         position_reached = cas.less(distance_to_goal, position_threshold)
 
         # %% orientation error
-        r_R_g = root_T_goal.to_rotation()
-        r_R_c = god_map.world.compose_fk_expression(root_link, tip_link).to_rotation()
+        r_R_g = root_T_goal.to_rotation_matrix()
+        r_R_c = god_map.world.compose_fk_expression(root_link, tip_link).to_rotation_matrix()
         rotation_error = cas.rotational_error(r_R_c, r_R_g)
         orientation_reached = cas.less(cas.abs(rotation_error), orientation_threshold)
 
@@ -99,7 +99,7 @@ class OrientationReached(Monitor):
             root_R_goal = root_T_x.dot(goal_orientation)
             r_R_g = self.update_expression_on_starting(root_R_goal)
 
-        r_R_c = god_map.world.compose_fk_expression(root_link, tip_link).to_rotation()
+        r_R_c = god_map.world.compose_fk_expression(root_link, tip_link).to_rotation_matrix()
         rotation_error = cas.rotational_error(r_R_c, r_R_g)
         self.observation_expression = cas.less(cas.abs(rotation_error), threshold)
 
@@ -149,7 +149,7 @@ class VectorsAligned(Monitor):
         self.root_V_root_normal = god_map.world.transform(target_frame=self.root, spatial_object=goal_normal)
         self.root_V_root_normal.scale(1)
 
-        root_R_tip = god_map.world.compose_fk_expression(self.root, self.tip).to_rotation()
+        root_R_tip = god_map.world.compose_fk_expression(self.root, self.tip).to_rotation_matrix()
         root_V_tip_normal = root_R_tip.dot(self.tip_V_tip_normal)
         error = cas.angle_between_vector(root_V_tip_normal, self.root_V_root_normal)
         expr = cas.less(error, threshold)

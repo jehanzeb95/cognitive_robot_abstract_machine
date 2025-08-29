@@ -61,7 +61,7 @@ class SetOdometry(PayloadMonitor):
         parent_T_pose_ref = cas.TransformationMatrix(god_map.world.compute_forward_kinematics_np(self.odom_connection.parent, self.base_pose.reference_frame))
         parent_T_pose = parent_T_pose_ref @ self.base_pose
         position = parent_T_pose.to_position().to_np()
-        orientation = parent_T_pose.to_rotation().to_quaternion().to_np()
+        orientation = parent_T_pose.to_rotation_matrix().to_quaternion().to_np()
         god_map.world.state[self.odom_connection.x.name].position = position[0]
         god_map.world.state[self.odom_connection.y.name].position = position[1]
         axis, angle = axis_angle_from_quaternion(orientation[0],

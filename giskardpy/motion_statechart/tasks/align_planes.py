@@ -49,7 +49,7 @@ class AlignPlanes(Task):
                    f'_Z:{self.tip_V_tip_normal.z:.3f}'
         super().__init__(name=name)
 
-        root_R_tip = god_map.world.compose_fk_expression(self.root, self.tip).to_rotation()
+        root_R_tip = god_map.world.compose_fk_expression(self.root, self.tip).to_rotation_matrix()
         root_V_tip_normal = root_R_tip.dot(self.tip_V_tip_normal)
         self.add_vector_goal_constraints(frame_V_current=root_V_tip_normal,
                                          frame_V_goal=self.root_V_root_normal,

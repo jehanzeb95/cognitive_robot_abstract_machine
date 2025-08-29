@@ -179,8 +179,8 @@ class CartesianOrientation(Task):
             root_R_goal = self.update_expression_on_starting(root_R_goal)
 
         r_T_c = god_map.world.compose_fk_expression(self.root_link, self.tip_link)
-        r_R_c = r_T_c.to_rotation()
-        c_R_r_eval = god_map.world.compose_fk_evaluated_expression(self.tip_link, self.root_link).to_rotation()
+        r_R_c = r_T_c.to_rotation_matrix()
+        c_R_r_eval = god_map.world.compose_fk_evaluated_expression(self.tip_link, self.root_link).to_rotation_matrix()
 
         self.add_rotation_goal_constraints(frame_R_current=r_R_c,
                                            frame_R_goal=root_R_goal,
@@ -234,7 +234,7 @@ class CartesianPose(Task):
         :param weight: default WEIGHT_ABOVE_CA
         """
         self.goal_ref = self.goal_pose.reference_frame
-        goal_orientation = self.goal_pose.to_rotation()
+        goal_orientation = self.goal_pose.to_rotation_matrix()
         goal_point = self.goal_pose.to_position()
 
         if self.absolute:
@@ -258,7 +258,7 @@ class CartesianPose(Task):
         distance_to_goal = cas.euclidean_distance(root_P_goal, r_P_c)
 
         r_T_c = god_map.world.compose_forward_kinematics_expression(self.root_link, self.tip_link)
-        r_R_c = r_T_c.to_rotation()
+        r_R_c = r_T_c.to_rotation_matrix()
 
         self.add_rotation_goal_constraints(frame_R_current=r_R_c,
                                            frame_R_goal=root_R_goal,
@@ -319,7 +319,7 @@ class CartesianRotationVelocityLimit(Task):
         self.weight = weight
         self.max_velocity = max_velocity
 
-        r_R_c = god_map.world.compose_fk_expression(self.root_link, self.tip_link).to_rotation()
+        r_R_c = god_map.world.compose_fk_expression(self.root_link, self.tip_link).to_rotation_matrix()
 
         self.add_rotational_velocity_limit(frame_R_current=r_R_c,
                                            max_velocity=self.max_velocity,
@@ -348,7 +348,7 @@ class CartesianVelocityLimit(Task):
         super().__init__(name=name)
         r_T_c = god_map.world.compose_fk_expression(self.root_link, self.tip_link)
         r_P_c = r_T_c.to_position()
-        r_R_c = r_T_c.to_rotation()
+        r_R_c = r_T_c.to_rotation_matrix()
         self.add_translational_velocity_limit(frame_P_current=r_P_c,
                                               max_velocity=max_linear_velocity,
                                               weight=weight)

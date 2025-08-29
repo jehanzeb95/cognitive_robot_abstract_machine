@@ -49,8 +49,8 @@ class SpiralMixing(Task):
                                         reference_velocity=CartesianPosition.default_reference_velocity,
                                         weight=weight)
         god_map.debug_expression_manager.add_debug_expression('root_T_goal', root_T_goal)
-        self.add_rotation_goal_constraints(frame_R_current=root_T_tip.to_rotation(),
-                                           frame_R_goal=root_T_goal.to_rotation(),
+        self.add_rotation_goal_constraints(frame_R_current=root_T_tip.to_rotation_matrix(),
+                                           frame_R_goal=root_T_goal.to_rotation_matrix(),
                                            reference_velocity=CartesianOrientation.default_reference_velocity,
                                            weight=weight)
 

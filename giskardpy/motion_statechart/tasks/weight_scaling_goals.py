@@ -242,8 +242,8 @@ class MaxManipulabilityAsEq3(Task):
 
         root_P_tip = god_map.world.compose_fk_expression(self.root_link, self.tip_link).to_position()[:3]
 
-        r_R_c = god_map.world.compose_fk_expression(self.root_link, self.tip_link).to_rotation()
-        c_R_r_eval = god_map.world.compose_fk_evaluated_expression(self.tip_link, self.root_link).to_rotation()
+        r_R_c = god_map.world.compose_fk_expression(self.root_link, self.tip_link).to_rotation_matrix()
+        c_R_r_eval = god_map.world.compose_fk_evaluated_expression(self.tip_link, self.root_link).to_rotation_matrix()
         hack = cas.RotationMatrix.from_axis_angle(cas.Vector3((0, 0, 1)), 0.0001)
         frame_R_current = r_R_c.dot(hack)  # hack to avoid singularity
         tip_Q_tipCurrent = c_R_r_eval.dot(frame_R_current).to_quaternion()[:3]

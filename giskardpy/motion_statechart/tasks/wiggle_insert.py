@@ -118,7 +118,7 @@ class WiggleInsert(Task):
         root_R_hole_normal = god_map.world.compute_fk(self.root_link, self.tip_link).dot(tip_R_hole_normal)
 
         r_T_c = god_map.world.compose_fk_expression(self.root_link, self.tip_link)
-        r_R_c = r_T_c.to_rotation()
+        r_R_c = r_T_c.to_rotation_matrix()
 
         self.add_rotation_goal_constraints(frame_R_current=r_R_c,
                                            frame_R_goal=root_R_hole_normal,
