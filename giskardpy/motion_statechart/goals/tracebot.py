@@ -9,10 +9,11 @@ import semantic_world.spatial_types.spatial_types as cas
 from giskardpy.motion_statechart.goals.goal import Goal
 from giskardpy.motion_statechart.tasks.task import WEIGHT_ABOVE_CA, Task
 from giskardpy.god_map import god_map
+from giskardpy.utils.decorators import validated_dataclass
 from semantic_world.world_description.world_entity import Body
 
 
-@dataclass
+@validated_dataclass
 class InsertCylinder(Goal):
     cylinder_name: Body
     hole_point: cas.Point3
@@ -33,31 +34,31 @@ class InsertCylinder(Goal):
             target_frame=self.root, spatial_object=self.hole_point
         )
         if self.up is None:
-            self.up = cas.Vector3((0, 0, 1))
+            self.up = cas.Vector3.Z()
             self.up.reference_frame = self.root
         self.root_V_up = god_map.world.transform(
-            target_frame=self.root, spatial_object=up
+            target_frame=self.root, spatial_object=self.up
         )
 
         self.weight = WEIGHT_ABOVE_CA
 
-        root_P_hole = cas.Point3(self.root_P_hole)
-        root_V_up = cas.Vector3(self.root_V_up)
+        root_P_hole = self.root_P_hole
+        root_V_up = self.root_V_up
         root_T_tip = god_map.world.compose_forward_kinematics_expression(
             self.root, self.tip
         )
         root_P_tip = root_T_tip.to_position()
-        tip_P_cylinder_bottom = cas.Vector3([0, 0, self.cylinder_height / 2])
+        tip_P_cylinder_bottom = cas.Vector3(0, 0, self.cylinder_height / 2)
         root_P_cylinder_bottom = root_T_tip.dot(tip_P_cylinder_bottom)
         root_P_tip = root_P_tip + root_P_cylinder_bottom
-        root_V_cylinder_z = root_T_tip.dot(cas.Vector3([0, 0, -1]))
+        root_V_cylinder_z = root_T_tip @ -cas.Vector3.Z()
 
         # %% straight line goal
         root_P_top = root_P_hole + root_V_up * self.pre_grasp_height
-        distance_to_top = cas.euclidean_distance(root_P_tip, root_P_top)
+        distance_to_top = root_P_tip.euclidean_distance(root_P_top)
 
-        distance_to_line, root_P_on_line = cas.distance_point_to_line_segment(
-            root_P_tip, root_P_hole, root_P_top
+        distance_to_line, root_P_on_line = root_P_tip.distance_to_line_segment(
+            root_P_hole, root_P_top
         )
         distance_to_hole = (root_P_hole - root_P_tip).norm()
 
@@ -69,10 +70,10 @@ class InsertCylinder(Goal):
             reference_velocity=0.1,
             weight=self.weight,
         )
-        reach_top.observation_expression = cas.less(distance_to_top, 0.01)
+        reach_top.observation_expression = distance_to_top < 0.01
 
         # %% tilted orientation goal
-        tilt_error = cas.angle_between_vector(root_V_cylinder_z, root_V_up)
+        tilt_error = root_V_cylinder_z.angle_between(root_V_up)
         tilt_task = Task(name="Slightly Tilted")
         self.add_task(tilt_task)
         tilt_task.add_position_constraint(
@@ -82,9 +83,7 @@ class InsertCylinder(Goal):
             weight=self.weight,
         )
         root_V_cylinder_z.vis_frame = self.tip
-        tilt_task.observation_expression = cas.less_equal(
-            cas.abs(tilt_error - self.tilt), 0.01
-        )
+        tilt_task.observation_expression = cas.abs(tilt_error - self.tilt) <= 0.01
 
         init_done = f"{reach_top} and {tilt_task}"
 
@@ -100,7 +99,7 @@ class InsertCylinder(Goal):
             weight=self.weight,
             name="pregrasp",
         )
-        stay_on_line.observation_expression = cas.less(distance_to_line, 0.01)
+        stay_on_line.observation_expression = distance_to_line < 0.01
 
         insert_task = Task(name="Insert")
         self.add_task(insert_task)
@@ -112,7 +111,7 @@ class InsertCylinder(Goal):
             name="insertion",
         )
         insert_task.start_condition = init_done
-        insert_task.observation_expression = cas.less(distance_to_hole, 0.01)
+        insert_task.observation_expression = distance_to_hole < 0.01
 
         bottom_reached = f"{insert_task} and {stay_on_line}"
 
@@ -130,6 +129,6 @@ class InsertCylinder(Goal):
         )
         tilt_straight_task.start_condition = bottom_reached
         # tilt_straight_task.end_condition = tilt_monitor.observation_state
-        tilt_straight_task.observation_expression = cas.less_equal(tilt_error, 0.01)
+        tilt_straight_task.observation_expression = tilt_error <= 0.01
 
         self.observation_expression = tilt_straight_task.observation_expression

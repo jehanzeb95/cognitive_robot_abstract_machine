@@ -30,6 +30,9 @@ class MotionStatechartNode:
     logic3_end_condition: Optional[cas.Expression] = field(default=None, init=False)
     logic3_reset_condition: Optional[cas.Expression] = field(default=None, init=False)
 
+    def __str__(self):
+        return self.name
+
     def set_unparsed_conditions(
         self,
         start_condition: Optional[str] = None,
