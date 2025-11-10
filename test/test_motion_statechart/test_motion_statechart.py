@@ -23,6 +23,10 @@ from giskardpy.motion_statechart.motion_statechart import (
     MotionStatechart,
     ObservationState,
 )
+from giskardpy.motion_statechart.tasks.cartesian_tasks import (
+    CartesianPose,
+    CartesianOrientation,
+)
 from giskardpy.motion_statechart.tasks.joint_tasks import JointPositionList, JointState
 from giskardpy.qp.qp_controller_config import QPControllerConfig
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
@@ -878,6 +882,7 @@ def test_continuous_joint(pr2_world):
     msc.compile(QPControllerConfig.create_default_with_50hz())
     msc.tick_until_end()
 
+
 def test_revolute_joint(pr2_world):
     msc = MotionStatechart(pr2_world)
     joint_goal = JointPositionList(
@@ -896,3 +901,72 @@ def test_revolute_joint(pr2_world):
     end.start_condition = joint_goal.observation_variable
     msc.compile(QPControllerConfig.create_default_with_50hz())
     msc.tick_until_end()
+
+
+def test_cart_goal_1eef(pr2_world: World):
+    tip = pr2_world.get_kinematic_structure_entity_by_name("r_gripper_tool_frame")
+    root = pr2_world.get_kinematic_structure_entity_by_name("base_footprint")
+    tip_goal = TransformationMatrix.from_xyz_quaternion(pos_x=-0.2, reference_frame=tip)
+
+    msc = MotionStatechart(pr2_world)
+    cart_goal = CartesianPose(
+        name=PrefixedName("cart_goal"),
+        root_link=root,
+        tip_link=tip,
+        goal_pose=tip_goal,
+    )
+    msc.add_node(cart_goal)
+    end = EndMotion(name=PrefixedName("end"))
+    msc.add_node(end)
+    end.start_condition = cart_goal.observation_variable
+    msc.compile(QPControllerConfig.create_default_with_50hz())
+    msc.tick_until_end()
+
+
+def test_cart_goal_simple(pr2_world: World):
+    tip = pr2_world.get_kinematic_structure_entity_by_name("base_footprint")
+    root = pr2_world.get_kinematic_structure_entity_by_name("odom_combined")
+    tip_goal = TransformationMatrix.from_xyz_quaternion(pos_x=-0.2, reference_frame=tip)
+
+    msc = MotionStatechart(pr2_world)
+    cart_goal = CartesianPose(
+        name=PrefixedName("cart_goal"),
+        root_link=root,
+        tip_link=tip,
+        goal_pose=tip_goal,
+    )
+    msc.add_node(cart_goal)
+    end = EndMotion(name=PrefixedName("end"))
+    msc.add_node(end)
+    end.start_condition = cart_goal.observation_variable
+    msc.compile(QPControllerConfig.create_default_with_50hz())
+    msc.tick_until_end()
+
+    fk = pr2_world.compute_forward_kinematics_np(root, tip)
+    assert np.allclose(fk, tip_goal.to_np(), atol=cart_goal.threshold)
+
+
+def test_CartesianOrientation(pr2_world: World):
+    tip = pr2_world.get_kinematic_structure_entity_by_name("base_footprint")
+    root = pr2_world.get_kinematic_structure_entity_by_name("odom_combined")
+
+    tip_goal = cas.RotationMatrix.from_axis_angle(
+        cas.Vector3.Z(), 4.0, reference_frame=tip
+    )
+
+    msc = MotionStatechart(pr2_world)
+    cart_goal = CartesianOrientation(
+        name=PrefixedName("cart_goal"),
+        root_link=root,
+        tip_link=tip,
+        goal_orientation=tip_goal,
+    )
+    msc.add_node(cart_goal)
+    end = EndMotion(name=PrefixedName("end"))
+    msc.add_node(end)
+    end.start_condition = cart_goal.observation_variable
+    msc.compile(QPControllerConfig.create_default_with_50hz())
+    msc.tick_until_end()
+
+    fk = pr2_world.compute_forward_kinematics_np(root, tip)
+    assert np.allclose(fk, tip_goal.to_np(), atol=cart_goal.threshold)

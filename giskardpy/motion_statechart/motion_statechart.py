@@ -372,7 +372,7 @@ class MotionStatechart(SubclassJSONSerializer):
 
     def _compile_qp_controller(self, controller_config: QPControllerConfig):
         ordered_dofs = sorted(
-            self.world.degrees_of_freedom,
+            self.world.active_degrees_of_freedom,
             key=lambda dof: self.world.state._index[dof.name],
         )
         constraint_collection = self._combine_constraint_collections_of_nodes()

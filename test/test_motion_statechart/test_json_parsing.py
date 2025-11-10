@@ -10,10 +10,14 @@ from giskardpy.motion_statechart.motion_statechart import (
     LifeCycleState,
     ObservationState,
 )
+from giskardpy.motion_statechart.tasks.cartesian_tasks import CartesianPose
 from giskardpy.motion_statechart.tasks.joint_tasks import JointPositionList, JointState
 from giskardpy.qp.qp_controller_config import QPControllerConfig
+from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
+    KinematicStructureEntityKwargsTracker,
+)
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
-from semantic_digital_twin.spatial_types import Vector3
+from semantic_digital_twin.spatial_types import Vector3, TransformationMatrix
 from semantic_digital_twin.spatial_types.derivatives import DerivativeMap
 from semantic_digital_twin.spatial_types.spatial_types import (
     trinary_logic_and,
@@ -25,6 +29,7 @@ from semantic_digital_twin.world_description.connections import (
 )
 from semantic_digital_twin.world_description.degree_of_freedom import DegreeOfFreedom
 from semantic_digital_twin.world_description.world_entity import Body
+import numpy as np
 
 
 @pytest.fixture()
@@ -205,3 +210,36 @@ def test_executing_json_parsed_statechart():
         observation_json_copy, motion_statechart=msc_copy
     )
     assert observation_copy == msc_copy.observation_state
+
+
+def test_cart_goal_simple(pr2_world: World):
+    tip = pr2_world.get_kinematic_structure_entity_by_name("base_footprint")
+    root = pr2_world.get_kinematic_structure_entity_by_name("odom_combined")
+    tip_goal = TransformationMatrix.from_xyz_quaternion(pos_x=-0.2, reference_frame=tip)
+
+    msc = MotionStatechart(pr2_world)
+    cart_goal = CartesianPose(
+        name=PrefixedName("cart_goal"),
+        root_link=root,
+        tip_link=tip,
+        goal_pose=tip_goal,
+    )
+    msc.add_node(cart_goal)
+    end = EndMotion(name=PrefixedName("end"))
+    msc.add_node(end)
+    end.start_condition = cart_goal.observation_variable
+
+    json_data = msc.to_json()
+    json_str = json.dumps(json_data)
+    new_json_data = json.loads(json_str)
+
+    tracker = KinematicStructureEntityKwargsTracker.from_world(pr2_world)
+    kwargs = tracker.create_kwargs()
+    kwargs["world"] = pr2_world
+    msc_copy = MotionStatechart.from_json(new_json_data, **kwargs)
+
+    msc_copy.compile(QPControllerConfig.create_default_with_50hz())
+    msc_copy.tick_until_end()
+
+    fk = pr2_world.compute_forward_kinematics_np(root, tip)
+    assert np.allclose(fk, tip_goal.to_np(), atol=cart_goal.threshold)

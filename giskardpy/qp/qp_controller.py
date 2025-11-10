@@ -405,17 +405,39 @@ class QPController:
         # get_middleware().loginfo(f'  #inequality constraints: {self.num_ineq_constraints}')
 
     def _set_active_dofs(self, degrees_of_freedom: List[DegreeOfFreedom]):
+        all_active_float_variables = set().union(
+            *[
+                {
+                    dof.variables.position.name,
+                    dof.variables.velocity.name,
+                    dof.variables.acceleration.name,
+                    dof.variables.jerk.name,
+                }
+                for dof in degrees_of_freedom
+            ]
+        )
         float_variable_names = self.constraint_collection.get_all_float_variable_names()
+        active_float_variables = all_active_float_variables & float_variable_names
+
+        def dof_used(dof: DegreeOfFreedom) -> bool:
+            vars_ = dof.variables
+            return (
+                vars_.position.name in float_variable_names
+                or vars_.velocity.name in float_variable_names
+                or vars_.acceleration.name in float_variable_names
+                or vars_.jerk.name in float_variable_names
+            )
+
         self.dof_filter = np.array(
             [
                 i
                 for i, v in sorted(
                     enumerate(self.world_state_symbols), key=lambda x: x[1].name
                 )
-                if v.name in float_variable_names
+                if v.name in active_float_variables
             ]
         )
-        self.active_dofs = [degrees_of_freedom[i] for i in self.dof_filter]
+        self.active_dofs = [dof for dof in degrees_of_freedom if dof_used(dof)]
 
     def has_not_free_variables(self) -> bool:
         return len(self.active_dofs) == 0

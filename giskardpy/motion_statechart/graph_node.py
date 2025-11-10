@@ -24,6 +24,7 @@ from giskardpy.qp.constraint_collection import ConstraintCollection
 from giskardpy.utils.utils import string_shortener
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.world import World
+from semantic_digital_twin.world_description.geometry import Color
 
 if TYPE_CHECKING:
     from giskardpy.motion_statechart.motion_statechart import (
@@ -241,10 +242,17 @@ class BuildContext:
 
 
 @dataclass
+class DebugExpression:
+    name: str
+    expression: cas.Expression
+    color: Color = field(default_factory=lambda: Color(1, 0, 0, 1))
+
+
+@dataclass
 class NodeArtifacts:
     constraints: ConstraintCollection = field(default_factory=ConstraintCollection)
     observation: cas.Expression = field(default_factory=lambda: cas.TrinaryUnknown)
-    debug_expressions: Dict[str, cas.Expression] = field(default_factory=dict)
+    debug_expressions: List[DebugExpression] = field(default_factory=list)
 
 
 @dataclass(repr=False, eq=False)
@@ -468,8 +476,9 @@ class MotionStatechartNode(SubclassJSONSerializer):
     @classmethod
     def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         node_kwargs = {}
-        del data["type"]
         for field_name, field_data in data.items():
+            if field_name == "type":
+                continue
             if isinstance(field_data, dict) and "type" in field_data:
                 field_data = SubclassJSONSerializer.from_json(field_data, **kwargs)
             node_kwargs[field_name] = field_data

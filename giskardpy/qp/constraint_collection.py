@@ -306,8 +306,8 @@ class ConstraintCollection:
         # w is redundant
         for i in range(3):
             self.add_equality_constraint(
-                task_expression=q_error[0],
-                equality_bound=-q_error[1],
+                task_expression=q_error[i],
+                equality_bound=-q_error[i],
                 weight=weight,
                 reference_velocity=reference_velocity,
                 name=PrefixedName(str(i), str(name)),
