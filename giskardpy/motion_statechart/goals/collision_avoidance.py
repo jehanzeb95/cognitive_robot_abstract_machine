@@ -260,8 +260,45 @@ class SelfCA(Goal):
     max_avoided_bodies: int = field(default=1, kw_only=True)
     buffer_zone_distance: float = field(kw_only=True)
 
+    def expand(self, context: BuildContext) -> None:
+        distance_monitor = MotionStatechartNode(
+            name=PrefixedName("collision distance", str(self.name)), _plot=False
+        )
+        distance_monitor.observation_expression = (
+            context.collision_scene.external_contact_distance_symbol(
+                self._main_body, self.idx
+            )
+            > 50
+        )
+        self.add_node(distance_monitor)
+
+        buffer_zone_expr, violated_distance = self.create_buffer_zone_expression(
+            context
+        )
+
+        task = CollisionAvoidanceTask(
+            name=PrefixedName("collision avoidance", str(self.name)),
+            root_link=context.world.root,
+            tip_link=self._main_body,
+            root_V_contact_normal=context.collision_scene.external_map_V_n_symbol(
+                self._main_body, self.idx
+            ),
+            tip_P_contact=context.collision_scene.external_new_a_P_pa_symbol(
+                self._main_body, self.idx
+            ),
+            distance_expression=context.collision_scene.external_contact_distance_symbol(
+                self._main_body, self.idx
+            ),
+            buffer_zone_distance=buffer_zone_expr,
+            violated_distance=violated_distance,
+            weight=self.create_weight(context),
+            max_velocity=self.max_velocity,
+        )
+        self.add_node(task)
+
+        task.pause_condition = distance_monitor.observation_variable
+
     def __post_init__(self):
-        self._plot = False
         self.name = f"{self.name_prefix}/{self.__class__.__name__}/{self.body_a.name}/{self.body_b.name}/{self.idx}"
         self.root = self.world.root
         self.control_horizon = context.config.prediction_horizon - (
@@ -388,11 +425,11 @@ class CollisionAvoidance(Goal):
             or not self.collision_entries[-1].is_allow_all_collision()
         ):
             self.add_external_collision_avoidance_constraints(context)
-        if not self.collision_entries or (
-            not self.collision_entries[-1].is_allow_all_collision()
-            and not self.collision_entries[-1].is_allow_all_self_collision()
-        ):
-            self.add_self_collision_avoidance_constraints(context)
+        # if not self.collision_entries or (
+        #     not self.collision_entries[-1].is_allow_all_collision()
+        #     and not self.collision_entries[-1].is_allow_all_self_collision()
+        # ):
+        #     self.add_self_collision_avoidance_constraints(context)
         collision_matrix = (
             context.collision_scene.matrix_manager.compute_collision_matrix()
         )
