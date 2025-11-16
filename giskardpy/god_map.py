@@ -30,7 +30,6 @@ class GodMap:
 
     # %% controller datatypes
     trajectory: Trajectory
-    qp_solver_solution: np.ndarray
     added_collision_checks: Dict[Tuple[PrefixedName, PrefixedName], float]
     motion_start_time: float
 
