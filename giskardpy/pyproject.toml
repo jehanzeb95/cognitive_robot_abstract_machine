@@ -29,7 +29,7 @@ license = { text = "LGPL-3.0-only" }
 "Bug Tracker" = 'https://github.com/SemRoCo/giskardpy/issues'
 
 [tool.setuptools.packages.find]
-where = ["."]  # list of folders that contain the packages (["."] by default)
+where = ["src"]  # list of folders that contain the packages (["."] by default)
 include = ["giskardpy*"]
 
 [tool.setuptools.dynamic]
