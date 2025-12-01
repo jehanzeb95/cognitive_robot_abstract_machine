@@ -43,6 +43,7 @@ class PipelineTestCase(unittest.TestCase):
 
         cls.fbx_path = os.path.join(
             get_semantic_digital_twin_directory_root(os.getcwd()),
+            "semantic_digital_twin",
             "resources",
             "fbx",
             "test_dressers.fbx",

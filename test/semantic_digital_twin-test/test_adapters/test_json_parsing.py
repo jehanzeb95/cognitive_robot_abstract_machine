@@ -266,6 +266,8 @@ def test_json_serialization_with_mesh():
                 os.path.dirname(__file__),
                 "..",
                 "..",
+                "..",
+                "semantic_digital_twin",
                 "resources",
                 "stl",
                 "milk.stl",

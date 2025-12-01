@@ -257,6 +257,7 @@ def test_model_synchronization_merge_full_world(rclpy_node):
     pr2_world = URDFParser.from_file(
         os.path.join(
             get_semantic_digital_twin_directory_root(os.getcwd()),
+            "semantic_digital_twin",
             "resources",
             "urdf",
             "pr2_kinematic_tree.urdf",

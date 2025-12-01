@@ -34,6 +34,8 @@ class ProcTHORTestCase(unittest.TestCase):
             os.path.dirname(os.path.abspath(__file__)),
             "..",
             "..",
+            "..",
+            "semantic_digital_twin",
             "resources",
             "procthor_json",
         )
@@ -321,6 +323,7 @@ class ProcTHORTestCase(unittest.TestCase):
         world = ProcTHORParser.from_file(
             os.path.join(
                 get_semantic_digital_twin_directory_root(os.getcwd()),
+                "semantic_digital_twin",
                 "resources",
                 "procthor_json",
                 "house_987654321.json",

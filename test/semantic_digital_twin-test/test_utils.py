@@ -12,7 +12,7 @@ from semantic_digital_twin.utils import (
 def test_get_semantic_digital_twin_directory_root():
     path = os.path.abspath(__file__)
     root = get_semantic_digital_twin_directory_root(path)
-    assert root == os.path.abspath(os.path.join(os.path.dirname(path), ".."))
+    assert root == os.path.abspath(os.path.join(os.path.dirname(path), "..", ".."))
 
 
 def test_type_string_to_string():

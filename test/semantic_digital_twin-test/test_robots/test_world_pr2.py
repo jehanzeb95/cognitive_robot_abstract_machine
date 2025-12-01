@@ -378,6 +378,8 @@ def test_load_collision_config_srdf(pr2_world):
         os.path.dirname(os.path.abspath(__file__)),
         "..",
         "..",
+        "..",
+        "semantic_digital_twin",
         "resources",
         "collision_configs",
         "pr2.srdf",
