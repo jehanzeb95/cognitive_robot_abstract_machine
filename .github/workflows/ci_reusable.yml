@@ -7,7 +7,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     container:
-      image: "pycram/semantic_world:jazzy"
+      image: ghcr.io/${{ github.repository }}:jazzy
     steps:
       - uses: actions/checkout@v4
         with:
