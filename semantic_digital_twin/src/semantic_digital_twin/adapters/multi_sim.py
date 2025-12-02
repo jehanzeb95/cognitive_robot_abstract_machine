@@ -51,6 +51,7 @@ from ..world_description.world_entity import (
 )
 from ..world_description.world_modification import (
     AddKinematicStructureEntityModification,
+    AddActuatorModification,
 )
 
 
@@ -1406,6 +1407,30 @@ class RegionSpawner(KinematicStructureEntitySpawner, ABC):
         )
 
 
+class ActuatorSpawner(EntitySpawner):
+    entity_type: ClassVar[Type[Actuator]] = Actuator
+    """
+    The type of the entity to spawn.
+    """
+
+    def _spawn(self, simulator: MultiverseSimulator, entity: Actuator) -> bool:
+        """
+        Spawns a Actuator object in the Multiverse simulator including its dofs.
+
+        :param simulator: The Multiverse simulator to spawn the entity in.
+        :param entity: The Actuator object to spawn.
+
+        :return: True if the entity is spawned successfully, False otherwise.
+        """
+        return self._spawn_actuator(simulator, entity)
+
+    @abstractmethod
+    def _spawn_actuator(
+        self, simulator: MultiverseSimulator, actuator: Actuator
+    ) -> bool:
+        raise NotImplementedError
+
+
 class MujocoEntitySpawner(EntitySpawner, ABC): ...
 
 
@@ -1446,8 +1471,7 @@ class MujocoKinematicStructureEntitySpawner(
             shape, visible=visible, collidable=collidable
         )
         assert shape_props is not None, f"Failed to convert shape {id(shape)}."
-        shape_name = shape_props["name"]
-        del shape_props["name"]
+        shape_name = shape_props.pop("name")
         result = simulator.add_entity(
             entity_name=shape_name,
             entity_type="geom",
@@ -1464,6 +1488,42 @@ class MujocoBodySpawner(MujocoKinematicStructureEntitySpawner, BodySpawner): ...
 
 
 class MujocoRegionSpawner(MujocoKinematicStructureEntitySpawner, RegionSpawner): ...
+
+
+class MujocoActuatorSpawner(MujocoEntitySpawner, ActuatorSpawner):
+    entity_type: ClassVar[Type[MujocoActuator]] = MujocoActuator
+
+    def _spawn_actuator(
+        self, simulator: MultiverseMujocoConnector, actuator: MujocoActuator
+    ) -> bool:
+        actuator_props = MujocoActuatorConverter.convert(actuator)
+        actuator_name = actuator_props.pop("name")
+        dof_names = actuator_props.pop("dof_names")
+        assert len(dof_names) == 1, "Actuator must be associated with exactly one DOF."
+        dof_name = dof_names[0]
+        connection = next(
+            (
+                conn
+                for conn in actuator._world.connections
+                if dof_name in [dof.name.name for dof in conn.dofs]
+            ),
+            None,
+        )
+        assert connection is not None, f"Connection for DOF {dof_name} not found."
+        connection_name = connection.name.name
+        joint_spec = simulator.get_joint(joint_name=connection_name).result
+        assert joint_spec is not None, f"Joint {connection_name} not found."
+        actuator_props["target"] = joint_spec.name
+        actuator_props["trntype"] = mujoco.mjtTrn.mjTRN_JOINT
+        result = simulator.add_entity(
+            entity_name=actuator_name,
+            entity_type="actuator",
+            entity_properties=actuator_props,
+        )
+        return (
+            result.type
+            == MultiverseCallbackResult.ResultType.SUCCESS_AFTER_EXECUTION_ON_MODEL
+        )
 
 
 @dataclass
@@ -1497,6 +1557,9 @@ class MultiSimSynchronizer(ModelChangeCallback, ABC):
         for modification in self.world._model_manager.model_modification_blocks[-1]:
             if isinstance(modification, AddKinematicStructureEntityModification):
                 entity = modification.kinematic_structure_entity
+                self.entity_spawner.spawn(simulator=self.simulator, entity=entity)
+            elif isinstance(modification, AddActuatorModification):
+                entity = modification.actuator
                 self.entity_spawner.spawn(simulator=self.simulator, entity=entity)
 
     def stop(self):
