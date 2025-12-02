@@ -7,7 +7,10 @@ WORKDIR $OVERLAY_WS/src
 SHELL ["/bin/bash", "-c"]
 
 WORKDIR /opt/ros
-RUN apt update && apt install python3.12-venv ros-jazzy-xacro python3-vcstool git ros-dev-tools default-jre graphviz graphviz-dev -y && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt update  \
+    && apt install python3.12-venv ros-jazzy-xacro python3-vcstool git ros-dev-tools default-jre graphviz graphviz-dev -y  \
+    && apt-get clean  \
+    && rm -rf /var/lib/apt/lists/*
 RUN vcs import --input https://raw.githubusercontent.com/cram2/cognitive_robot_abstract_machine/main/semantic_digital_twin/rosinstall/semantic_digital_twin-https.rosinstall
 RUN mv iai_maps /opt/ros/overlay_ws/src/iai_maps
 RUN mv iai_pr2 /opt/ros/overlay_ws/src/iai_pr2
@@ -17,9 +20,8 @@ RUN echo "source $OVERLAY_WS/install/setup.bash" >> ~/.bashrc
 RUN python3 -m venv cram-env --system-site-packages  \
     && source cram-env/bin/activate  \
     && pip install poetry \
-    && poetry install \
-    && pip install -U pip  \
-    && pip install -U setuptools
+    && cd cognitive_robot_abstract_machine \
+    && poetry install
 #    && pip install -r krrood/requirements.txt  \
 #    && pip install -r semantic_digital_twin/requirements.txt  \
 #    && pip install -r giskardpy/requirements.txt  \
