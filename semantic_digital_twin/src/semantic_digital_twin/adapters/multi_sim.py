@@ -70,7 +70,7 @@ def cas_pose_to_list(pose: TransformationMatrix) -> List[float]:
     return [px, py, pz, qw, qx, qy, qz]
 
 
-class GeomVisibilityAndCollisionType(Enum):
+class GeomVisibilityAndCollisionType(int, Enum):
     """
     Enum values representing different types of geometric visibility and collision properties.
     """
