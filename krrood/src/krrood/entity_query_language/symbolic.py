@@ -354,6 +354,12 @@ class SymbolicExpression(Generic[T], ABC):
     def __repr__(self):
         return self._name_
 
+ResultMapping = Callable[
+    [Iterable[Dict[int, HashedValue]]], Iterable[Dict[int, HashedValue]]
+]
+"""
+A function that maps the results of a query object descriptor to a new set of results.
+"""
 
 @dataclass(eq=False, repr=False)
 class Selectable(SymbolicExpression[T], ABC):
@@ -366,6 +372,10 @@ class Selectable(SymbolicExpression[T], ABC):
     For example, this is the case for the ResultQuantifiers & QueryDescriptors that operate on a single selected
     variable.
     """
+    _results_mapping: List[ResultMapping] = field(init=False, default_factory=list)
+    """
+    Mapping functions that map the results of the query object descriptor to a new set of results.
+    """
 
     @property
     def _is_iterable_(self):
@@ -377,6 +387,69 @@ class Selectable(SymbolicExpression[T], ABC):
         if self._var_ and self._var_ is not self:
             return self._var_._is_iterable_
         return False
+
+
+    def max(self) -> Self:
+        """
+        Add a result mapping that maps the results to the result that has the maximum
+        value for the given variable.
+
+        :param variable: The variable for which the maximum value is to be found, if None, the first selected variable
+         is used.
+        :return: This query object descriptor.
+        """
+        variable = self._var_
+        key = lambda res: res[variable._id_].value
+
+        def get_max(results_gen):
+            try:
+                yield max(results_gen, key=key)
+            except ValueError:
+                yield {variable._id_: HashedValue(None)}
+
+        self._results_mapping.append(get_max)
+        return self
+
+    def min(self, variable: Optional[CanBehaveLikeAVariable[T]] = None) -> Self:
+        """
+        Add a result mapping that maps the results to the result that has the minimum
+        value for the given variable.
+
+        :param variable: The variable for which the minimum value is to be found, if None, the first selected variable
+         is used.
+        :return: This query object descriptor.
+        """
+        variable = self._var_
+        key = lambda res: res[variable._id_].value
+
+        def get_min(results_gen):
+            try:
+                yield min(results_gen, key=key)
+            except ValueError:
+                yield {variable._id_: HashedValue(None)}
+
+        self._results_mapping.append(get_min)
+        return self
+
+    def sum(self, variable: Optional[CanBehaveLikeAVariable[T]] = None) -> Self:
+        """
+        Computes the sum of values produced by the given variable.
+        If variable is None, tries to sum the rows directly (rare case).
+        """
+        variable = self._var_
+        map_to_var_val = lambda res: res[variable._id_].value
+
+        def apply_sum(results_gen):
+            entered = False
+            sum_val = 0
+            for val in map(map_to_var_val, results_gen):
+                entered = True
+                sum_val += val
+            sum_val = HashedValue(sum_val if entered else None)
+            yield {variable._id_: sum_val}
+
+        self._results_mapping.append(apply_sum)
+        return self
 
 
 @dataclass(eq=False, repr=False)
@@ -683,14 +756,6 @@ class Count(ResultQuantifier[T]):
         return len(list(super().evaluate()))
 
 
-ResultMapping = Callable[
-    [Iterable[Dict[int, HashedValue]]], Iterable[Dict[int, HashedValue]]
-]
-"""
-A function that maps the results of a query object descriptor to a new set of results.
-"""
-
-
 @dataclass(frozen=True)
 class OrderByParams:
     """
@@ -723,13 +788,13 @@ class QueryObjectDescriptor(SymbolicExpression[T], ABC):
     """
     The variables that are selected by the query object descriptor.
     """
-    _results_mapping: List[ResultMapping] = field(init=False, default_factory=list)
-    """
-    Mapping functions that map the results of the query object descriptor to a new set of results.
-    """
     _order_by: Optional[OrderByParams] = field(default=None, init=False)
     """
     Parameters for ordering the results of the query object descriptor.
+    """
+    _results_mapping: List[ResultMapping] = field(init=False, default_factory=list)
+    """
+    Mapping functions that map the results of the query object descriptor to a new set of results.
     """
 
     def __post_init__(self):
@@ -799,68 +864,6 @@ class QueryObjectDescriptor(SymbolicExpression[T], ABC):
                 seen_results.add(bindings)
 
         self._results_mapping.append(get_distinct_results)
-        return self
-
-    def max(self, variable: Optional[CanBehaveLikeAVariable[T]] = None) -> Self:
-        """
-        Add a result mapping that maps the results to the result that has the maximum
-        value for the given variable.
-
-        :param variable: The variable for which the maximum value is to be found, if None, the first selected variable
-         is used.
-        :return: This query object descriptor.
-        """
-        variable = variable or self._selected_variables[0]
-        key = lambda res: res[variable._id_].value
-
-        def get_max(results_gen):
-            try:
-                yield max(results_gen, key=key)
-            except ValueError:
-                yield {variable._id_: HashedValue(None)}
-
-        self._results_mapping.append(get_max)
-        return self
-
-    def min(self, variable: Optional[CanBehaveLikeAVariable[T]] = None) -> Self:
-        """
-        Add a result mapping that maps the results to the result that has the minimum
-        value for the given variable.
-
-        :param variable: The variable for which the minimum value is to be found, if None, the first selected variable
-         is used.
-        :return: This query object descriptor.
-        """
-        variable = variable or self._selected_variables[0]
-        key = lambda res: res[variable._id_].value
-
-        def get_min(results_gen):
-            try:
-                yield min(results_gen, key=key)
-            except ValueError:
-                yield {variable._id_: HashedValue(None)}
-
-        self._results_mapping.append(get_min)
-        return self
-
-    def sum(self, variable: Optional[CanBehaveLikeAVariable[T]] = None) -> Self:
-        """
-        Computes the sum of values produced by the given variable.
-        If variable is None, tries to sum the rows directly (rare case).
-        """
-        variable = variable or self._selected_variables[0]
-        map_to_var_val = lambda res: res[variable._id_].value
-
-        def apply_sum(results_gen):
-            entered = False
-            sum_val = 0
-            for val in map(map_to_var_val, results_gen):
-                entered = True
-                sum_val += val
-            sum_val = HashedValue(sum_val if entered else None)
-            yield {variable._id_: sum_val}
-
-        self._results_mapping.append(apply_sum)
         return self
 
     @lru_cache(maxsize=None)
