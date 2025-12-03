@@ -87,6 +87,13 @@ class GeomVisibilityAndCollisionType(IntEnum):
     """
     Geometry is both visible and collidable (variant 1).
     """
+class MultiSimError(Exception):
+    """Base class for all MultiSim-related exceptions."""
+
+
+@dataclass(eq=False)
+class MultiSimCamera(SemanticAnnotation):
+    """Semantic annotation declaring that a Body is a Camera."""
 
     VISIBLE_AND_COLLIDABLE_2 = 1
     """
@@ -596,6 +603,42 @@ class ActuatorConverter(EntityConverter, ABC):
         return actuator_props
 
 
+class CameraConverter(EntityConverter, ABC):
+    """
+    Converts an Camera object to a dictionary of actuator properties for Multiverse simulator.
+    """
+
+    entity_type: ClassVar[Type[MultiSimCamera]] = MultiSimCamera
+    """
+    The type of the entity to convert.
+    """
+
+    def _convert(self, entity: MultiSimCamera, **kwargs) -> Dict[str, Any]:
+        """
+        Converts a Camera object to a dictionary of camera properties for Multiverse simulator.
+
+        :param entity: The Camera object to convert.
+        :return: A dictionary of camer properties, by default containing list of DOF names.
+        """
+        camera_props = EntityConverter._convert(self, entity)
+        camera_props["body"] = entity.body.name.name
+        return camera_props
+
+
+class MujocoError(MultiSimError):
+    """Base class for all MuJoCo-related exceptions."""
+
+
+class MujocoEntityNotFoundError(MujocoError):
+    """Raised when a MuJoCo entity of a given type and name cannot be found."""
+
+    def __init__(
+        self, entity_name: str, entity_type: mujoco.mjtObj, action: str = "find"
+    ):
+        message = f"Failed to {action}: type={entity_type}, name='{entity_name}'"
+        super().__init__(message)
+
+
 @dataclass(eq=False)
 class MujocoActuator(Actuator):
     """
@@ -717,6 +760,24 @@ class MujocoActuator(Actuator):
         actuator.gain_parameters = data["gain_parameters"]
         actuator.gain_type = mujoco.mjtGain(data["gain_type"])
         return actuator
+
+
+@dataclass(eq=False)
+class MujocoCamera(MultiSimCamera):
+    """Semantic annotation declaring that a Body is a MujocoCamera."""
+
+    mode: mujoco.mjtCamLight = mujoco.mjtCamLight.mjCAMLIGHT_FIXED
+    orthographic: bool = False
+    fovy: float = 45.0
+    resolution: list = field(default_factory=lambda: [1, 1])
+    focal_length: list = field(default_factory=lambda: [0, 0])
+    focal_pixel: list = field(default_factory=lambda: [0, 0])
+    principal_length: list = field(default_factory=lambda: [0, 0])
+    principal_pixel: list = field(default_factory=lambda: [0, 0])
+    sensor_size: list = field(default_factory=lambda: [0, 0])
+    ipd: float = 0.068
+    pos: list = field(default_factory=lambda: [0, 0, 0])
+    quat: list = field(default_factory=lambda: [1, 0, 0, 0])
 
 
 class MujocoConverter(EntityConverter, ABC): ...
@@ -923,6 +984,28 @@ class MujocoGeneralActuatorConverter(MujocoActuatorConverter, ActuatorConverter)
         return actuator_props
 
 
+class MujocoCameraConverter(CameraConverter, ABC):
+
+    entity_type: ClassVar[Type[MujocoCamera]] = MujocoCamera
+
+    def _post_convert(
+        self, entity: MujocoCamera, camera_props: Dict[str, Any], **kwargs
+    ) -> Dict[str, Any]:
+        camera_props["mode"] = entity.mode
+        camera_props["orthographic"] = entity.orthographic
+        camera_props["fovy"] = entity.fovy
+        camera_props["resolution"] = entity.resolution
+        camera_props["focal_length"] = entity.focal_length
+        camera_props["focal_pixel"] = entity.focal_pixel
+        camera_props["principal_length"] = entity.principal_length
+        camera_props["principal_pixel"] = entity.principal_pixel
+        camera_props["sensor_size"] = entity.sensor_size
+        camera_props["ipd"] = entity.ipd
+        camera_props["pos"] = entity.pos
+        camera_props["quat"] = entity.quat
+        return camera_props
+
+
 @dataclass
 class MultiSimBuilder(ABC):
     """
@@ -986,6 +1069,8 @@ class MultiSimBuilder(ABC):
                 is_visible=shape in body.visual,
                 is_collidable=shape in body.collision,
             )
+        for camera in body.get_semantic_annotations_by_type(MultiSimCamera):
+            self._build_camera(camera=camera)
 
     def build_region(self, region: Region):
         """
@@ -1063,11 +1148,20 @@ class MultiSimBuilder(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _build_actuator(self, actuator):
+    def _build_actuator(self, actuator: Actuator):
         """
         Builds an actuator in the simulator.
 
         :param actuator: The actuator to build.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def _build_camera(self, camera: MultiSimCamera):
+        """
+        Builds a camera in the simulator.
+
+        :param camera: The camera to build.
         """
         raise NotImplementedError
 
@@ -1133,14 +1227,14 @@ class MujocoBuilder(MultiSimBuilder):
         geom_props = MujocoGeomConverter.convert(
             shape, visible=is_visible, collidable=is_collidable
         )
-        assert geom_props is not None, f"Failed to convert shape {id(shape)}."
         parent_body_name = parent.name.name
         parent_body_spec = self._find_entity(
             entity_type=mujoco.mjtObj.mjOBJ_BODY, entity_name=parent_body_name
         )
-        assert (
-            parent_body_spec is not None
-        ), f"Parent body {parent_body_name} not found."
+        if parent_body_spec is None:
+            raise MujocoEntityNotFoundError(
+                entity_name=parent_body_name, entity_type=mujoco.mjtObj.mjOBJ_BODY
+            )
         if geom_props["type"] == mujoco.mjtGeom.mjGEOM_MESH and not self._parse_geom(
             geom_props=geom_props
         ):
@@ -1246,17 +1340,48 @@ class MujocoBuilder(MultiSimBuilder):
             ),
             None,
         )
-        assert connection is not None, f"Connection for DOF {dof_name} not found."
+        if connection is None:
+            raise MultiSimError(
+                f"Connection for DOF {dof_name} not found, it need to be added first."
+            )
         connection_name = connection.name.name
         joint_spec = self._find_entity(
             entity_type=mujoco.mjtObj.mjOBJ_JOINT, entity_name=connection_name
         )
-        assert joint_spec is not None, f"Joint {connection_name} not found."
+        if joint_spec is None:
+            raise MujocoEntityNotFoundError(
+                entity_name=connection_name,
+                entity_type=mujoco.mjtObj.mjOBJ_JOINT,
+            )
         actuator_props["target"] = joint_spec.name
         actuator_props["trntype"] = mujoco.mjtTrn.mjTRN_JOINT
         actuator_name = actuator.name.name
         actuator_spec = self.spec.add_actuator(**actuator_props)
-        assert actuator_spec is not None, f"Failed to add actuator {actuator_name}."
+        if actuator_spec is None:
+            raise MujocoEntityNotFoundError(
+                entity_name=actuator_name,
+                entity_type=mujoco.mjtObj.mjOBJ_ACTUATOR,
+                action="add",
+            )
+
+    def _build_camera(self, camera: MultiSimCamera):
+        camera_name = camera.name.name
+        camera_props = MujocoCameraConverter.convert(camera)
+        body_name = camera_props.pop("body")
+        body_spec = self._find_entity(
+            entity_type=mujoco.mjtObj.mjOBJ_BODY, entity_name=body_name
+        )
+        if body_spec is None:
+            raise MujocoEntityNotFoundError(
+                entity_name=body_name, entity_type=mujoco.mjtObj.mjOBJ_BODY
+            )
+        camera_spec = body_spec.add_camera(**camera_props)
+        if camera_spec is None:
+            raise MujocoEntityNotFoundError(
+                entity_name=camera_name,
+                entity_type=mujoco.mjtObj.mjOBJ_CAMERA,
+                action="add",
+            )
 
     def _build_mujoco_body(self, body: Union[Region, Body]):
         """
@@ -1267,18 +1392,22 @@ class MujocoBuilder(MultiSimBuilder):
         if body.name.name == "world":
             return
         body_props = MujocoKinematicStructureEntityConverter.convert(body)
-        assert body_props is not None, f"Failed to convert body {body.name.name}."
         parent_body_name = body.parent_connection.parent.name.name
         parent_body_spec = self._find_entity(
             entity_type=mujoco.mjtObj.mjOBJ_BODY, entity_name=parent_body_name
         )
-        assert (
-            parent_body_spec is not None
-        ), f"Parent body {parent_body_name} not found."
+        if parent_body_spec is None:
+            raise MujocoEntityNotFoundError(
+                entity_name=parent_body_name,
+                entity_type=mujoco.mjtObj.mjOBJ_BODY,
+            )
         body_spec = parent_body_spec.add_body(**body_props)
-        assert (
-            body_spec is not None
-        ), f"Failed to add body {body.name.name} to parent {parent_body_name}."
+        if body_spec is None:
+            raise MujocoEntityNotFoundError(
+                entity_name=parent_body_name,
+                entity_type=mujoco.mjtObj.mjOBJ_BODY,
+                action="add",
+            )
 
     def _find_entity(
         self,
