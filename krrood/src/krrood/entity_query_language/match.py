@@ -186,6 +186,10 @@ class Match(Generic[T]):
                 self.selected_variables.append(self.variable)
             return entity(self.selected_variables[0], *self.conditions)
 
+    def domain_from(self, domain: DomainType):
+        self.domain = domain
+        return self
+
     def __getattr__(self, item):
         return self.attributes[item].attr
 

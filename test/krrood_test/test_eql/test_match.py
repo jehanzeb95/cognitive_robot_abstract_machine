@@ -27,10 +27,10 @@ def test_match(handles_and_containers_world):
     world = handles_and_containers_world
 
     fixed_connection_query = the(
-        entity_matching(FixedConnection, world.connections)(
+        match(FixedConnection)(
             parent=match(Container)(name="Container1"),
             child=match(Handle)(name="Handle1"),
-        )
+        ).domain_from(world.connections)
     )
 
     fixed_connection_query_manual = the(
@@ -55,10 +55,12 @@ def test_match(handles_and_containers_world):
 def test_select(handles_and_containers_world):
     world = handles_and_containers_world
 
-    fixed_connection = the(entity_matching(FixedConnection, world.connections)(
-            parent=match(Container)(name="Container1"),
-            child=match(Handle)(name="Handle1"),
-        ))
+    container = match(Container)(name="Container1")
+    handle = match(Handle)(name="Handle1")
+    fixed_connection = match(FixedConnection)(
+            parent=container,
+            child=handle,
+        ).domain_from(world.connections)
     container_and_handle = select(container:=fixed_connection.parent,
                                   handle:=fixed_connection.child)
 
