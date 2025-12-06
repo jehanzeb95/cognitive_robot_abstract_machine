@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import cached_property
 
-from typing_extensions import Optional, Type, Dict, Any, List, Union, Self, Iterable
+from typing_extensions import Optional, Type, Dict, Any, List, Union, Self, Iterable, Set
 
-from krrood.entity_query_language.symbolic import Exists, ResultQuantifier, An, DomainType
+from krrood.entity_query_language.symbolic import Exists, ResultQuantifier, An, DomainType, Variable
 from .entity import (
     ConditionType,
     contains,
@@ -119,7 +119,10 @@ class Match(Selectable[T]):
         This is needed to prevent the SymbolicExpression __post_init__ from being called which will make a node out of
         this instance, and that is not what we want.
         """
-        ...
+        if self._variable_ is not None:
+            self._var_ = self._variable_
+            self._id_ = self._var_._id_
+            self._node_ = self._var_._node_
 
     def __call__(self, *args, **kwargs) -> Union[Self, T, CanBehaveLikeAVariable[T]]:
         """
@@ -161,8 +164,10 @@ class Match(Selectable[T]):
         return self
 
     def _set_as_selected_(self):
-        self._is_selected_ = True
-        self._update_selected_variables_(self._variable_)
+        variable = self._variable_
+        if self._parent_match_:
+            variable = {v.assigned_value: v.attr for k, v in self._parent_match_._attributes_.items()}[self]
+        self._update_selected_variables_(variable)
 
     def _evaluate__(
             self,
@@ -197,7 +202,7 @@ class Match(Selectable[T]):
         elif self._variable_ is None:
             self._variable_ = let(self._type_, self._domain_)
 
-        if not self._var_:
+        if self._var_ is None:
             self._var_ = variable
 
         self._parent_match_ = parent
@@ -228,6 +233,8 @@ class Match(Selectable[T]):
         """
         if not self._variable_:
             self._resolve_()
+        if self._var_ is None:
+            self._var_ = self._variable_
         if len(self._selected_variables_) > 1:
             query_descriptor = set_of(self._selected_variables_, *self._conditions_)
         else:
@@ -259,7 +266,57 @@ class Match(Selectable[T]):
         return self._expression_.evaluate()
 
     def __getattr__(self, item):
-        return self._attributes_[item].assigned_value
+        attr = None
+        if item not in self._attributes_:
+            attr = Attribute(_child_=self._expression_, _attr_name_=item, _owner_class_=self._type_)
+            return AttributeAssignedMatch(self, _attr_=attr)
+        return AttributeAssignedMatch(self, _attr_assignment_=self._attributes_[item])
+
+    def __hash__(self):
+        return hash(id(self))
+
+
+@dataclass
+class AttributeAssignedMatch(Selectable[T]):
+    _original_match_: Match
+    _attr_assignment_: Optional[AttributeAssignment] = None
+    _attr_: Optional[Attribute] = None
+
+    def __post_init__(self):
+        if self._attr_assignment_ is None:
+            self._var_ = self._attr_
+        elif self._attr_assignment_.flattened_attr is None:
+            self._var_ = self._attr_assignment_.attr
+        else:
+            self._var_ = self._attr_assignment_.flattened_attr
+        self._id_ = self._var_._id_
+        self._node_ = self._var_._node_
+
+    def _set_as_selected_(self):
+        self._original_match_._update_selected_variables_(self._var_)
+
+    @property
+    def _root_match_(self) -> Match:
+        return self._original_match_._root_match_
+
+    def __getattr__(self, item):
+        if self._attr_assignment_ is None or (item not in self._attr_assignment_.assigned_value._attributes_):
+            attr = Attribute(_child_=self._var_, _attr_name_=item, _owner_class_=self._var_._type_)
+            return AttributeAssignedMatch(self._original_match_, _attr_=attr)
+        return AttributeAssignedMatch(self._attr_assignment_.assigned_value,
+                                      self._attr_assignment_.assigned_value._attributes_[item])
+
+    def _evaluate__(self, sources: Optional[Dict[int, Any]] = None, parent: Optional[SymbolicExpression] = None) -> \
+    Iterable[OperationResult]:
+        self._eval_parent_ = parent
+        yield from self._var_._evaluate__(sources, self)
+
+    @property
+    def _name_(self) -> str:
+        return self._var_._name_
+
+    def _all_variable_instances_(self) -> List[Variable]:
+        return self._var_._all_variable_instances_
 
 
 @dataclass
@@ -284,6 +341,10 @@ class AttributeAssignment:
     """
     The conditions that define attribute assignment.
     """
+    flattened_attr: Flatten = field(init=False, default=None)
+    """
+    The flattened attribute if the attribute is an iterable and has been flattened.
+    """
 
     def resolve(self, parent_match: Match):
         """
@@ -296,7 +357,8 @@ class AttributeAssignment:
         if self.attr._is_iterable_ and (
                 self.assigned_value._kwargs_ or self.is_type_filter_needed
         ):
-            possibly_flattened_attr = flatten(self.attr)
+            self.flattened_attr = flatten(self.attr)
+            possibly_flattened_attr = self.flattened_attr
 
         self.assigned_value._resolve_(possibly_flattened_attr, parent_match)
 
@@ -329,12 +391,16 @@ class AttributeAssignment:
                 isinstance(self.assigned_value, Match) and self.assigned_value._universal_
         )
         ):
-            condition = contains(self.assigned_variable, flatten(self.attr))
+            self.flattened_attr = flatten(self.attr)
+            condition = contains(self.assigned_variable, self.flattened_attr)
         else:
             condition = self.attr == self.assigned_variable
 
         if isinstance(self.assigned_value, Match) and self.assigned_value._existential_:
-            condition = exists(self.attr, condition)
+            if self.flattened_attr is None:
+                condition = exists(self.attr, condition)
+            else:
+                condition = exists(self.flattened_attr, condition)
 
         return condition
 
@@ -398,10 +464,9 @@ class AttributeAssignment:
                 and issubclass(self.assigned_value._type_, attr_type)
         )
 
-
 def matching(
         type_: Union[Type[T], CanBehaveLikeAVariable[T], Any, None] = None,
-) -> Union[Type[T], CanBehaveLikeAVariable[T], Match[T]]:
+) -> Union[Type[T], CanBehaveLikeAVariable[T], Match[T], Set[T]]:
     """
     Create and return a Match instance that looks for the pattern provided by the type and the
     keyword arguments.
@@ -435,8 +500,8 @@ def match_all(
 
 
 def select(
-        *variables: Union[T, CanBehaveLikeAVariable[T], Match[T]],
-) -> Match[T]:
+        *variables: Any,
+) -> Match:
     """
     Equivalent to matching(type_) and selecting the variable to be included in the result.
     """
