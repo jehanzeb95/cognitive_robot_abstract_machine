@@ -400,6 +400,27 @@ class SymbolicType(Symbol):
                 result_list[x_index][y_index] = result
         return result_list
 
+    def is_bool_operation(self):
+        return self.casadi_sx.op() in [
+            ca.OP_AND,
+            ca.OP_OR,
+            ca.OP_IF_ELSE_ZERO,
+            ca.OP_NOT,
+            ca.OP_EQ,
+            ca.OP_NE,
+            ca.OP_LE,
+            ca.OP_LT,
+        ]
+
+    def __bool__(self) -> bool:
+        if self.is_constant():
+            return bool(self.to_np())
+        elif self.casadi_sx.op() == ca.OP_EQ:
+            left = self.casadi_sx.dep(0)
+            right = self.casadi_sx.dep(1)
+            return ca.is_equal(ca.simplify(left), ca.simplify(right), 5)
+        return NotImplemented
+
     def __repr__(self):
         return repr(self.casadi_sx)
 
@@ -2152,7 +2173,8 @@ class TransformationMatrix(
         :param child_frame: Child frame entity associated with the object.
         :return: An instance of the class with the specified transformations applied.
         """
-        axis = axis or Vector3(0, 0, 1)
+        if axis is None:
+            axis = Vector3(0, 0, 1)
         rotation_matrix = RotationMatrix.from_axis_angle(axis=axis, angle=angle)
         point = Point3(x_init=x, y_init=y, z_init=z)
         return cls.from_point_rotation_matrix(
