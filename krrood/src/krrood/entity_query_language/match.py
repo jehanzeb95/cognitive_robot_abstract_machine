@@ -4,9 +4,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from functools import cached_property
 
-from typing_extensions import Optional, Type, Dict, Any, List, Union, Self, Iterable, Set, Generic
+from typing_extensions import Optional, Type, Dict, Any, List, Union, Self, Iterable, Generic
 
-from krrood.entity_query_language.symbolic import Exists, ResultQuantifier, An, DomainType, Variable, Flatten
 from .entity import (
     ConditionType,
     contains,
@@ -29,8 +28,10 @@ from .symbolic import (
     SymbolicExpression,
     OperationResult,
     Literal,
-    SetOf,
-    Entity,
+    ResultQuantifier,
+    An,
+    Variable,
+    Flatten,
     Exists,
     DomainType
 )
@@ -356,7 +357,7 @@ class AttributeMatch(AbstractMatchExpression[T]):
     """
     The value to assign to the attribute, which can be a Match instance or a Literal.
     """
-    variable: Union[Attribute,Flatten] = field(default=None, kw_only=True)
+    variable: Union[Attribute, Flatten] = field(default=None, kw_only=True)
     """
     The symbolic variable representing the attribute.
     """
@@ -540,6 +541,8 @@ def select(
     for variable in variables:
         variable._match_expression_.set_as_selected()
     return variables[0]._match_expression_.root
+
+
 def entity_matching(
         type_: Union[Type[T], CanBehaveLikeAVariable[T]], domain: DomainType
 ) -> Union[Type[T], CanBehaveLikeAVariable[T], Match[T]]:

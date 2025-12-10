@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Union, Type, Iterable
+from typing_extensions import Optional, Union, Type, Iterable
 
 from .match import Match
 from .result_quantification_constraint import (

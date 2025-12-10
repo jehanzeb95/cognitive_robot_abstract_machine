@@ -69,7 +69,7 @@ class Symbol:
         return instance
 
     def domain_from(self, domain: Iterable[T]) -> T:
-        ...
+        raise NotImplementedError("This method should not be called, this is just for IDE hints")
 
 
 @dataclass(eq=False)
