@@ -427,6 +427,9 @@ class SymbolicType(Symbol):
             _te.Tuple[_te.Union[int, slice], _te.Union[int, slice]],
         ],
     ) -> Expression:
+        """
+        Gives this class the getitem behavior of numpy.
+        """
         if isinstance(item, _np.ndarray) and item.dtype == bool:
             item = (_np.where(item)[0], slice(None, None))
         return Expression(self.casadi_sx[item])
@@ -439,6 +442,9 @@ class SymbolicType(Symbol):
         ],
         value: ScalarData,
     ):
+        """
+        Gives this class the setitem behavior of numpy.
+        """
         self.casadi_sx[key] = value.casadi_sx if hasattr(value, "casadi_sx") else value
 
     @property
@@ -489,7 +495,7 @@ class SymbolicType(Symbol):
     def evaluate(self) -> _np.ndarray:
         """
         Substitutes the free variables in this expression using their `resolve` method and compute the result.
-        :return: The evaluate value of this expression.
+        :return: The evaluated value of this expression.
         """
         f = self.compile([self.free_variables()], sparse=False)
         return f(
@@ -499,7 +505,7 @@ class SymbolicType(Symbol):
     def substitute(
         self,
         old_variables: _te.List[FloatVariable],
-        new_variables: _te.List[_te.Union[FloatVariable, Expression]],
+        new_variables: _te.List[ScalarData],
     ) -> _te.Self:
         """
         Replace variables in an expression with new variables or expressions.
@@ -694,74 +700,6 @@ class VectorOperationsMixin:
         return distance
 
 
-class MatrixOperationsMixin:
-    casadi_sx: _ca.SX
-    """
-    Reference to the casadi data structure of type casadi.SX
-    """
-    shape: _te.Tuple[int, int]
-
-    def sum(self) -> Expression:
-        """
-        the equivalent to _np.sum(matrix)
-        """
-        return Expression(_ca.sum1(_ca.sum2(self.casadi_sx)))
-
-    def sum_row(self) -> Expression:
-        """
-        the equivalent to _np.sum(matrix, axis=0)
-        """
-        return Expression(_ca.sum1(self.casadi_sx))
-
-    def sum_column(self) -> Expression:
-        """
-        the equivalent to _np.sum(matrix, axis=1)
-        """
-        return Expression(_ca.sum2(self.casadi_sx))
-
-    def trace(self) -> Expression:
-        if not self.is_square():
-            raise NotSquareMatrixError(actual_dimensions=self.casadi_sx.shape)
-        s = 0
-        for i in range(self.casadi_sx.shape[0]):
-            s += self.casadi_sx[i, i]
-        return Expression(s)
-
-    def det(self) -> Expression:
-        """
-        Calculate the determinant of the given expression.
-
-        This function computes the determinant of the provided mathematical expression.
-        The input can be an instance of either `Expression`, `RotationMatrix`, or
-        `TransformationMatrix`. The result is returned as an `Expression`.
-
-        :return: An `Expression` representing the determinant of the input.
-        """
-        if not self.is_square():
-            raise NotSquareMatrixError(actual_dimensions=self.casadi_sx.shape)
-        return Expression(_ca.det(self.casadi_sx))
-
-    def is_square(self):
-        return self.casadi_sx.shape[0] == self.casadi_sx.shape[1]
-
-    def entrywise_product(self, other: Expression) -> Expression:
-        """
-        Computes the entrywise (element-wise) product of two matrices, assuming they have the same dimensions. The
-        operation multiplies each corresponding element of the input matrices and stores the result in a new matrix
-        of the same shape.
-
-        :param other: The second matrix, represented as an object of type `Expression`, whose shape
-                        must match the shape of `matrix1`.
-        :return: A new matrix of type `Expression` containing the entrywise product of `matrix1` and `matrix2`.
-        """
-        assert self.shape == other.shape
-        result = Expression.zeros(*self.shape)
-        for i in range(self.shape[0]):
-            for j in range(self.shape[1]):
-                result[i, j] = self[i, j] * other[i, j]
-        return result
-
-
 @_dataclasses.dataclass(eq=False)
 class FloatVariable(SymbolicType, BasicOperatorMixin):
     """
@@ -883,66 +821,6 @@ class Expression(
             else:
                 casadi_sx[i] = to_sx(data[i])
         self.casadi_sx = casadi_sx
-
-    @classmethod
-    def zeros(cls, rows: int, columns: int) -> Expression:
-        return cls(casadi_sx=_ca.SX.zeros(rows, columns))
-
-    @classmethod
-    def ones(cls, x: int, y: int) -> Expression:
-        return cls(casadi_sx=_ca.SX.ones(x, y))
-
-    @classmethod
-    def tri(cls, dimension: int) -> Expression:
-        return cls(data=_np.tri(dimension))
-
-    @classmethod
-    def eye(cls, size: int) -> Expression:
-        return cls(casadi_sx=_ca.SX.eye(size))
-
-    @classmethod
-    def diag(cls, args: _te.Union[_te.List[ScalarData], Expression]) -> Expression:
-        return cls(casadi_sx=_ca.diag(to_sx(args)))
-
-    @classmethod
-    def vstack(
-        cls,
-        list_of_matrices: _te.List[Expression],
-    ) -> _te.Self:
-        if len(list_of_matrices) == 0:
-            return cls(data=[])
-        return cls(casadi_sx=_ca.vertcat(*[to_sx(x) for x in list_of_matrices]))
-
-    @classmethod
-    def hstack(
-        cls,
-        list_of_matrices: _te.Union[_te.List[Expression]],
-    ) -> _te.Self:
-        if len(list_of_matrices) == 0:
-            return cls(data=[])
-        return cls(casadi_sx=_ca.horzcat(*[to_sx(x) for x in list_of_matrices]))
-
-    @classmethod
-    def diag_stack(
-        cls,
-        list_of_matrices: _te.Union[_te.List[Expression]],
-    ) -> Expression:
-        num_rows = int(_math.fsum(e.shape[0] for e in list_of_matrices))
-        num_columns = int(_math.fsum(e.shape[1] for e in list_of_matrices))
-        combined_matrix = Expression.zeros(num_rows, num_columns)
-        row_counter = 0
-        column_counter = 0
-        for matrix in list_of_matrices:
-            combined_matrix[
-                row_counter : row_counter + matrix.shape[0],
-                column_counter : column_counter + matrix.shape[1],
-            ] = matrix
-            row_counter += matrix.shape[0]
-            column_counter += matrix.shape[1]
-        return combined_matrix
-
-    def remove(self, rows: _te.List[int], columns: _te.List[int]):
-        self.casadi_sx.remove(rows, columns)
 
     def split(self) -> _te.List[Expression]:
         assert self.shape[0] == 1 and self.shape[1] == 1
@@ -1146,6 +1024,140 @@ class Expression(
         m1 = to_sx(self)
         m2 = to_sx(other)
         return Expression(_ca.kron(m1, m2))
+
+
+@_dataclasses.dataclass(eq=False)
+class Scalar(Expression):
+    pass
+
+
+@_dataclasses.dataclass(eq=False)
+class Vector(Expression):
+    pass
+
+
+@_dataclasses.dataclass(eq=False)
+class Matrix(Expression):
+
+    @classmethod
+    def zeros(cls, rows: int, columns: int) -> _te.Self:
+        return cls(casadi_sx=_ca.SX.zeros(rows, columns))
+
+    @classmethod
+    def ones(cls, x: int, y: int) -> _te.Self:
+        return cls(casadi_sx=_ca.SX.ones(x, y))
+
+    @classmethod
+    def tri(cls, dimension: int) -> _te.Self:
+        return cls(data=_np.tri(dimension))
+
+    @classmethod
+    def eye(cls, size: int) -> _te.Self:
+        return cls(casadi_sx=_ca.SX.eye(size))
+
+    @classmethod
+    def diag(cls, args: _te.Union[_te.List[ScalarData], Expression]) -> _te.Self:
+        return cls(casadi_sx=_ca.diag(to_sx(args)))
+
+    @classmethod
+    def vstack(
+        cls,
+        list_of_matrices: _te.List[Expression],
+    ) -> _te.Self:
+        if len(list_of_matrices) == 0:
+            return cls(data=[])
+        return cls(casadi_sx=_ca.vertcat(*[to_sx(x) for x in list_of_matrices]))
+
+    @classmethod
+    def hstack(
+        cls,
+        list_of_matrices: _te.Union[_te.List[Expression]],
+    ) -> _te.Self:
+        if len(list_of_matrices) == 0:
+            return cls(data=[])
+        return cls(casadi_sx=_ca.horzcat(*[to_sx(x) for x in list_of_matrices]))
+
+    @classmethod
+    def diag_stack(
+        cls,
+        list_of_matrices: _te.Union[_te.List[Expression]],
+    ) -> Expression:
+        num_rows = int(_math.fsum(e.shape[0] for e in list_of_matrices))
+        num_columns = int(_math.fsum(e.shape[1] for e in list_of_matrices))
+        combined_matrix = Matrix.zeros(num_rows, num_columns)
+        row_counter = 0
+        column_counter = 0
+        for matrix in list_of_matrices:
+            combined_matrix[
+                row_counter : row_counter + matrix.shape[0],
+                column_counter : column_counter + matrix.shape[1],
+            ] = matrix
+            row_counter += matrix.shape[0]
+            column_counter += matrix.shape[1]
+        return combined_matrix
+
+    def remove(self, rows: _te.List[int], columns: _te.List[int]):
+        self.casadi_sx.remove(rows, columns)
+
+    def sum(self) -> Expression:
+        """
+        the equivalent to _np.sum(matrix)
+        """
+        return Expression(_ca.sum1(_ca.sum2(self.casadi_sx)))
+
+    def sum_row(self) -> Expression:
+        """
+        the equivalent to _np.sum(matrix, axis=0)
+        """
+        return Expression(_ca.sum1(self.casadi_sx))
+
+    def sum_column(self) -> Expression:
+        """
+        the equivalent to _np.sum(matrix, axis=1)
+        """
+        return Expression(_ca.sum2(self.casadi_sx))
+
+    def trace(self) -> Expression:
+        if not self.is_square():
+            raise NotSquareMatrixError(actual_dimensions=self.casadi_sx.shape)
+        s = 0
+        for i in range(self.casadi_sx.shape[0]):
+            s += self.casadi_sx[i, i]
+        return Expression(s)
+
+    def det(self) -> Expression:
+        """
+        Calculate the determinant of the given expression.
+
+        This function computes the determinant of the provided mathematical expression.
+        The input can be an instance of either `Expression`, `RotationMatrix`, or
+        `TransformationMatrix`. The result is returned as an `Expression`.
+
+        :return: An `Expression` representing the determinant of the input.
+        """
+        if not self.is_square():
+            raise NotSquareMatrixError(actual_dimensions=self.casadi_sx.shape)
+        return Expression(_ca.det(self.casadi_sx))
+
+    def is_square(self):
+        return self.casadi_sx.shape[0] == self.casadi_sx.shape[1]
+
+    def entrywise_product(self, other: Expression) -> Expression:
+        """
+        Computes the entrywise (element-wise) product of two matrices, assuming they have the same dimensions. The
+        operation multiplies each corresponding element of the input matrices and stores the result in a new matrix
+        of the same shape.
+
+        :param other: The second matrix, represented as an object of type `Expression`, whose shape
+                        must match the shape of `matrix1`.
+        :return: A new matrix of type `Expression` containing the entrywise product of `matrix1` and `matrix2`.
+        """
+        assert self.shape == other.shape
+        result = Expression.zeros(*self.shape)
+        for i in range(self.shape[0]):
+            for j in range(self.shape[1]):
+                result[i, j] = self[i, j] * other[i, j]
+        return result
 
 
 def create_float_variables(
