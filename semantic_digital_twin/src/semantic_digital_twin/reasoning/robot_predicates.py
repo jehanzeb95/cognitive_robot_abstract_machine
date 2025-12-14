@@ -6,7 +6,7 @@ from typing import Optional, List
 
 import trimesh.sample
 from krrood.entity_query_language.entity import (
-    let,
+    var,
     entity,
     and_,
     not_,
@@ -39,7 +39,7 @@ def robot_in_collision(
     if ignore_collision_with is None:
         ignore_collision_with = []
 
-    body = let(type_=Body, domain=robot._world.bodies_with_enabled_collision)
+    body = var(type_=Body, domain=robot._world.bodies_with_enabled_collision)
     possible_collisions_bodies = an(
         entity(
             body,
@@ -74,7 +74,7 @@ def robot_holds_body(robot: AbstractRobot, body: Body) -> bool:
     """
     grippers = an(
         entity(
-            g := let(ParallelGripper, robot._world.semantic_annotations),
+            g := var(ParallelGripper, robot._world.semantic_annotations),
             g._robot == robot,
         )
     )
@@ -107,7 +107,7 @@ def blocking(
 
     robot = the(
         entity(
-            r := let(AbstractRobot, root._world.semantic_annotations),
+            r := var(AbstractRobot, root._world.semantic_annotations),
             contains(r.bodies, tip),
         )
     )

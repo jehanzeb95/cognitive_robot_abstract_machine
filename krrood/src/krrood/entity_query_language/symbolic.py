@@ -891,7 +891,7 @@ class QueryObjectDescriptor(SymbolicExpression[T], ABC):
         )
 
         # set the child of the query object descriptor to the expression and return self.
-        self._child_ = expression
+        self._update_child_(expression)
         return self
 
     def order_by(

@@ -76,7 +76,7 @@ def set_of(
     return SetOf(_selected_variables=list(selected_variables))
 
 
-def let(
+def var(
     type_: Type[T],
     domain: DomainType,
     name: Optional[str] = None,

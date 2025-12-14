@@ -21,7 +21,7 @@ from ..dataset.ormatic_interface import (
     BodyDAO,
 )
 from krrood.entity_query_language.entity import (
-    let,
+    var,
     entity,
     contains,
     and_,
@@ -38,7 +38,7 @@ def test_translate_simple_greater(session, database):
     session.add(PositionDAO(x=1, y=2, z=4))
     session.commit()
 
-    query = an(entity(position := let(type_=Position, domain=[]), position.z > 3))
+    query = an(entity(position := var(type_=Position, domain=[]), position.z > 3))
 
     translator = eql_to_sql(query, session)
     query_by_hand = select(PositionDAO).where(PositionDAO.z > 3)
@@ -60,7 +60,7 @@ def test_translate_or_condition(session, database):
 
     query = an(
         entity(
-            position := let(type_=Position, domain=[]),
+            position := var(type_=Position, domain=[]),
             or_(position.z == 4, position.x == 2),
         )
     )
@@ -97,7 +97,7 @@ def test_translate_join_one_to_one(session, database):
     )
     session.commit()
 
-    query = an(entity(pose := let(type_=Pose, domain=[]), pose.position.z > 3))
+    query = an(entity(pose := var(type_=Pose, domain=[]), pose.position.z > 3))
     translator = eql_to_sql(query, session)
     query_by_hand = select(PoseDAO).join(PoseDAO.position).where(PositionDAO.z > 3)
 
@@ -120,7 +120,7 @@ def test_translate_in_operator(session, database):
 
     query = an(
         entity(
-            position := let(Position, domain=[]),
+            position := var(Position, domain=[]),
             in_(position.x, [1, 7]),
         )
     )
@@ -148,7 +148,7 @@ def test_the_quantifier(session, database):
 
         query = the(
             entity(
-                position := let(
+                position := var(
                     type_=Position,
                     domain=domain,
                 ),
@@ -188,12 +188,12 @@ def test_equal(session, database):
     # Query for the kinematic tree of the drawer which has more than one component.
     # Declare the placeholders
 
-    prismatic_connection = let(
+    prismatic_connection = var(
         type_=PrismaticConnection,
         domain=world.connections,
         name="prismatic_connection",
     )
-    fixed_connection = let(
+    fixed_connection = var(
         type_=FixedConnection, domain=world.connections, name="fixed_connection"
     )
 
@@ -243,19 +243,19 @@ def test_complicated_equal(session, database):
 
     # Query for the kinematic tree of the drawer which has more than one component.
     # Declare the placeholders
-    parent_container = let(
+    parent_container = var(
         type_=Container, domain=world.bodies, name="parent_connection"
     )
-    prismatic_connection = let(
+    prismatic_connection = var(
         type_=PrismaticConnection,
         domain=world.connections,
         name="prismatic_connection",
     )
-    drawer_body = let(type_=Container, domain=world.bodies, name="drawer_body")
-    fixed_connection = let(
+    drawer_body = var(type_=Container, domain=world.bodies, name="drawer_body")
+    fixed_connection = var(
         type_=FixedConnection, domain=world.connections, name="fixed_connection"
     )
-    handle = let(type_=Handle, domain=world.bodies, name="handle")
+    handle = var(type_=Handle, domain=world.bodies, name="handle")
 
     # Write the query body - this was previously failing with "Attribute chain ended on a relationship"
     query = the(
@@ -284,7 +284,7 @@ def test_contains(session, database):
 
     query = an(
         entity(
-            b := let(type_=Body, domain=[], name="b"),
+            b := var(type_=Body, domain=[], name="b"),
             contains("Body1TestName", b.name),
         )
     )
