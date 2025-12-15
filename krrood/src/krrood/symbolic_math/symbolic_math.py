@@ -1087,7 +1087,8 @@ class Vector(Expression):
 @_dataclasses.dataclass(eq=False)
 class Matrix(Expression):
     def __init__(
-        self, data: _te.Optional[Iterable[bool | int | _IntEnum | float]] = None
+        self,
+        data: _te.Optional[Iterable[Iterable[bool | int | _IntEnum | float]]] = None,
     ):
         if data is None:
             data = []
