@@ -15,6 +15,7 @@ from copy import copy
 from dataclasses import dataclass, field, fields, MISSING, is_dataclass
 from functools import lru_cache, cached_property
 
+from krrood.entity_query_language.failures import VariableCannotBeEvaluated
 from typing_extensions import (
     Iterable,
     Any,
@@ -1252,25 +1253,48 @@ class Variable(CanBehaveLikeAVariable[T]):
         self._eval_parent_ = parent
         sources = sources or {}
         if self._id_ in sources:
-            if (
-                isinstance(self._parent_, LogicalBinaryOperator)
-                or self is self._conditions_root_
-            ):
-                self._is_false_ = not bool(sources[self._id_])
-            yield OperationResult(sources, not bool(sources[self._id_]), self)
+            yield self._build_operation_result_and_update_truth_value_(sources)
         elif self._domain_:
-            if isinstance(self._domain_, CanBehaveLikeAVariable):
-                for domain in self._domain_._evaluate__(sources, parent=self):
-                    for v in domain.value:
-                        bindings = {**sources, **domain.bindings, self._id_: v}
-                        yield OperationResult(bindings, False, self)
-            else:
-                for v in self._domain_:
-                    yield OperationResult({**sources, self._id_: v}, False, self)
+            yield from self._iterator_over_domain_values_(sources)
         elif self._is_inferred_ or self._predicate_type_:
             yield from self._instantiate_using_child_vars_and_yield_results_(sources)
         else:
-            raise ValueError("Cannot evaluate variable.")
+            raise VariableCannotBeEvaluated(self)
+
+    def _iterator_over_domain_values_(self, sources: Dict[int, Any]) -> Iterable[OperationResult]:
+        """
+        Iterate over the values in the variable's domain, yielding OperationResult instances.
+
+        :param sources: The current bindings.
+        :return: An Iterable of OperationResults for each value in the domain.
+        """
+        if isinstance(self._domain_, CanBehaveLikeAVariable):
+            yield from self._iterator_over_variable_domain_values_(sources)
+        else:
+            yield from self._iterator_over_iterable_domain_values_(sources)
+
+    def _iterator_over_variable_domain_values_(self, sources: Dict[int, Any]):
+        """
+        Iterate over the values in the variable's domain, where the domain is another variable.
+
+        :param sources: The current bindings.
+        :return: An Iterable of OperationResults for each value in the domain.
+        """
+        for domain in self._domain_._evaluate__(sources, parent=self):
+            for v in domain.value:
+                bindings = {**sources, **domain.bindings, self._id_: v}
+                yield self._build_operation_result_and_update_truth_value_(bindings)
+
+    def _iterator_over_iterable_domain_values_(self, sources: Dict[int, Any]):
+        """
+        Iterate over the values in the variable's domain, where the domain is an iterable.
+
+        :param sources: The current bindings.
+        :return: An Iterable of OperationResults for each value in the domain.
+        """
+        for v in self._domain_:
+            bindings = {**sources, self._id_: v}
+            yield self._build_operation_result_and_update_truth_value_(bindings)
 
     def _instantiate_using_child_vars_and_yield_results_(
         self, sources: Dict[int, Any]
@@ -1298,7 +1322,7 @@ class Variable(CanBehaveLikeAVariable[T]):
         Process the predicate/variable instance and get the results.
 
         :param instance: The created instance.
-        :param kwargs: The keyword arguments of the predicate/variable.
+        :param kwargs: The keyword arguments of the predicate/variable, which are a mapping kwarg_name: {var_id: value}.
         :return: The results' dictionary.
         """
         # kwargs is a mapping from name -> {var_id: value};
@@ -1306,7 +1330,20 @@ class Variable(CanBehaveLikeAVariable[T]):
         values = {self._id_: instance}
         for d in kwargs.values():
             values.update(d.bindings)
-        return OperationResult(values, not bool(instance), self)
+        return self._build_operation_result_and_update_truth_value_(values)
+
+    def _build_operation_result_and_update_truth_value_(self, bindings: Dict[int, Any]) -> OperationResult:
+        """
+        Build an OperationResult instance and update the truth value based on the bindings.
+
+        :param bindings: The bindings of the result.
+        :return: The OperationResult instance with updated truth value.
+        """
+        if isinstance(self._parent_, LogicalOperator) or (self is self._conditions_root_):
+            self._is_false_ = not bool(bindings[self._id_])
+        else:
+            self._is_false_ = False
+        return OperationResult(bindings, self._is_false_, self)
 
     @property
     def _name_(self):
