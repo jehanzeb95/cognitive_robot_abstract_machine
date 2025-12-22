@@ -474,28 +474,33 @@ class MotionStatechartNode(SubclassJSONSerializer):
     def create_lifecycle_transitions(
         self,
     ) -> Tuple[
-        cas.GenericSymbolicType,
-        cas.GenericSymbolicType,
-        cas.GenericSymbolicType,
-        cas.GenericSymbolicType,
+        sm.GenericSymbolicType,
+        sm.GenericSymbolicType,
+        sm.GenericSymbolicType,
+        sm.GenericSymbolicType,
     ]:
         """
         Create the life cycle transitions for this node.
         :return: A tuple of (not_started_transitions, running_transitions, pause_transitions, ended_transitions)
         """
-        end_or_chain = self._create_true_or_condition_chain(TransitionKind.END)
-        reset_or_chain = self._create_true_or_condition_chain(TransitionKind.RESET)
+        any_end_condition_true = self._create_any_ancestor_condition_true(
+            TransitionKind.END
+        )
+        any_reset_condition_true = self._create_any_ancestor_condition_true(
+            TransitionKind.RESET
+        )
 
         not_started_transitions = self._create_not_started_transitions()
         running_transitions = self._create_running_transitions(
-            end_or_chain=end_or_chain,
-            reset_or_chain=reset_or_chain,
+            any_end_condition_true=any_end_condition_true,
+            any_reset_condition_true=any_reset_condition_true,
         )
         pause_transitions = self._create_pause_transitions(
-            end_or_chain=end_or_chain, reset_or_chain=reset_or_chain
+            any_end_condition_true=any_end_condition_true,
+            any_reset_condition_true=any_reset_condition_true,
         )
         ended_transitions = self._create_ended_transitions(
-            reset_or_chain=reset_or_chain
+            any_reset_condition_true=any_reset_condition_true
         )
 
         return (
@@ -505,131 +510,153 @@ class MotionStatechartNode(SubclassJSONSerializer):
             ended_transitions,
         )
 
-    def _create_true_or_condition_chain(
+    def _create_any_ancestor_condition_true(
         self,
         transition_kind: TransitionKind,
-    ) -> cas.Expression:
+    ) -> sm.Scalar:
         """
-        Create a combined condition by traversing up the parent nodes starting from `self`.
-        The combined condition is created by applying `trinary_logic_or` on the conditions of each parent node.
-        The expected value of each nodes condition is `TrinaryTrue`.
-        :param self: The node to start traversing from.
-        :param transition_kind: The kind of transition whose condition to combine. e.g. RESET for reset_condition
-        :return: The combined condition.
-        """
+        Builds a combined condition by OR-ing the 'true' conditions of this node and its ancestors.
+        Traverses from the current node up to the root, combining conditions using trinary OR logic.
 
+        :param transition_kind: Transition type to check (e.g., RESET for reset_condition)
+        :return: Combined condition where True = any ancestor condition is Scalar.const_true()
+        """
+        current_node = self
+        condition = sm.Scalar(
+            current_node.get_condition(transition_kind) == sm.Scalar.const_true()
+        )
+        while current_node.parent_node is not None:
+            current_node = current_node.parent_node
+            cond_expr = sm.Scalar(
+                current_node.get_condition(transition_kind) == sm.Scalar.const_true()
+            )
+            condition = sm.trinary_logic_or(condition, cond_expr)
+        return condition
+
+    def get_condition(self, transition_kind: TransitionKind) -> Callable[[Any], Any]:
+        """
+        Get the condition for the given transition kind.
+        :param transition_kind: The kind of transition whose condition to get.
+        :return: The condition for the given transition kind.
+        """
         match transition_kind:
             case TransitionKind.START:
-                condition_getter = lambda n: n.start_condition
+                return self.start_condition
             case TransitionKind.PAUSE:
-                condition_getter = lambda n: n.pause_condition
+                return self.pause_condition
             case TransitionKind.END:
-                condition_getter = lambda n: n.end_condition
+                return self.end_condition
             case TransitionKind.RESET:
-                condition_getter = lambda n: n.reset_condition
+                return self.reset_condition
             case _:
                 raise ValueError(f"Unknown transition kind: {transition_kind}")
 
-        current_node = self
-        condition = condition_getter(current_node) == cas.TrinaryTrue
-        while current_node.parent_node is not None:
-            parent_cond = condition_getter(current_node.parent_node)
-            cond_expr = parent_cond == cas.TrinaryTrue
-            condition = cas.trinary_logic_or(condition, cond_expr)
-            current_node = current_node.parent_node
-        return condition
-
     def _create_ended_transitions(
-        self, reset_or_chain: cas.Expression
-    ) -> cas.GenericSymbolicType:
+        self, any_reset_condition_true: sm.Scalar
+    ) -> sm.GenericSymbolicType:
         """
         Create the ended transitions of the LifeCycleState for this node.
+        :param self: The node to create the transitions for.
+        :param any_reset_condition_true: The combined reset condition for this node and its parents. Combined using trinary_logic_or.
+        :return: The LifeCycleState transitions for the DONE state.
         """
-        return cas.if_else(
-            condition=reset_or_chain,
-            if_result=cas.Expression(LifeCycleValues.NOT_STARTED),
-            else_result=cas.Expression(LifeCycleValues.DONE),
+        return sm.if_else(
+            condition=any_reset_condition_true,
+            if_result=sm.Scalar(LifeCycleValues.NOT_STARTED),
+            else_result=sm.Scalar(LifeCycleValues.DONE),
         )
 
     def _create_pause_transitions(
         self,
-        end_or_chain: cas.Expression,
-        reset_or_chain: cas.Expression,
-    ) -> cas.GenericSymbolicType:
+        any_end_condition_true: sm.Scalar,
+        any_reset_condition_true: sm.Scalar,
+    ) -> sm.GenericSymbolicType:
         """
         Create the pause transitions of the LifeCycleState for this node.
+        :param self: The node to create the transitions for.
+        :param any_end_condition_true: The combined end condition for this node and its parents. Combined using trinary_logic_or.
+        :param any_reset_condition_true: The combined reset condition for this node and its parents. Combined using trinary_logic_or.
+        :return: The LifeCycleState transitions for the PAUSED state.
         """
-        unpause_condition = cas.trinary_logic_or(
-            self.pause_condition == cas.TrinaryFalse,
-            self.pause_condition == cas.TrinaryUnknown,
+        unpause_condition = sm.trinary_logic_or(
+            sm.Scalar(self.pause_condition != sm.Scalar.const_true()),
+            sm.Scalar(self.pause_condition == sm.Scalar.const_trinary_unknown()),
         )
         current = self
         while current.parent_node is not None:
             parent = current.parent_node
-            unpause_condition = cas.trinary_logic_and(
+            unpause_condition = sm.trinary_logic_and(
                 unpause_condition,
-                cas.trinary_logic_or(
-                    parent.pause_condition == cas.TrinaryUnknown,
-                    parent.pause_condition == cas.TrinaryFalse,
+                sm.trinary_logic_or(
+                    sm.Scalar(
+                        parent.pause_condition == sm.Scalar.const_trinary_unknown()
+                    ),
+                    sm.Scalar(parent.pause_condition != sm.Scalar.const_true()),
                 ),
             )
             current = parent
 
-        return cas.if_cases(
+        return sm.if_cases(
             cases=[
                 (
-                    reset_or_chain,
-                    cas.Expression(LifeCycleValues.NOT_STARTED),
+                    any_reset_condition_true,
+                    sm.Scalar(LifeCycleValues.NOT_STARTED),
                 ),
-                (end_or_chain, cas.Expression(LifeCycleValues.DONE)),
+                (any_end_condition_true, sm.Scalar(LifeCycleValues.DONE)),
                 (
                     unpause_condition,
-                    cas.Expression(LifeCycleValues.RUNNING),
+                    sm.Scalar(LifeCycleValues.RUNNING),
                 ),
             ],
-            else_result=cas.Expression(LifeCycleValues.PAUSED),
+            else_result=sm.Scalar(LifeCycleValues.PAUSED),
         )
 
     def _create_running_transitions(
         self,
-        end_or_chain: cas.Expression,
-        reset_or_chain: cas.Expression,
-    ) -> cas.GenericSymbolicType:
+        any_end_condition_true: sm.Scalar,
+        any_reset_condition_true: sm.Scalar,
+    ) -> sm.GenericSymbolicType:
         """
         Create the running transitions of the LifeCycleState for this node.
+        :param self: The node to create the transitions for.
+        :param any_end_condition_true: The combined end condition for this node and its parents. Combined using trinary_logic_or.
+        :param any_reset_condition_true: The combined reset condition for this node and its parents. Combined using trinary_logic_or.
+        :return: The LifeCycleState transitions for the RUNNING state.
         """
-        pause_or_chain = self._create_true_or_condition_chain(TransitionKind.PAUSE)
-        return cas.if_cases(
+        pause_or_chain = self._create_any_ancestor_condition_true(TransitionKind.PAUSE)
+        return sm.if_cases(
             cases=[
                 (
-                    reset_or_chain,
-                    cas.Expression(LifeCycleValues.NOT_STARTED),
+                    any_reset_condition_true,
+                    sm.Scalar(LifeCycleValues.NOT_STARTED),
                 ),
-                (end_or_chain, cas.Expression(LifeCycleValues.DONE)),
-                (pause_or_chain, cas.Expression(LifeCycleValues.PAUSED)),
+                (any_end_condition_true, sm.Scalar(LifeCycleValues.DONE)),
+                (pause_or_chain, sm.Scalar(LifeCycleValues.PAUSED)),
             ],
-            else_result=cas.Expression(LifeCycleValues.RUNNING),
+            else_result=sm.Scalar(LifeCycleValues.RUNNING),
         )
 
-    def _create_not_started_transitions(self) -> cas.GenericSymbolicType:
+    def _create_not_started_transitions(self) -> sm.GenericSymbolicType:
         """
         Create the not started transitions of the LifeCycleState for this node.
+        :param self: The node to create the transitions for.
+        :return: The LifeCycleState transitions for the NOT_STARTED state.
         """
-        not_started_condition = self.start_condition == cas.TrinaryTrue
+        start_condition = sm.Scalar(self.start_condition == sm.Scalar.const_true())
         current = self
         while current.parent_node is not None:
             parent = current.parent_node
-            not_started_condition = cas.trinary_logic_and(
-                not_started_condition,
-                cas.trinary_logic_not(parent.end_condition),
-                parent.start_condition == cas.TrinaryTrue,
+            start_condition = sm.trinary_logic_and(
+                start_condition,
+                sm.trinary_logic_not(parent.end_condition),
+                sm.Scalar(parent.start_condition == sm.Scalar.const_true()),
             )
             current = parent
 
-        return cas.if_else(
-            condition=not_started_condition,
-            if_result=cas.Expression(LifeCycleValues.RUNNING),
-            else_result=cas.Expression(LifeCycleValues.NOT_STARTED),
+        return sm.if_else(
+            condition=start_condition,
+            if_result=sm.Scalar(LifeCycleValues.RUNNING),
+            else_result=sm.Scalar(LifeCycleValues.NOT_STARTED),
         )
 
     @property

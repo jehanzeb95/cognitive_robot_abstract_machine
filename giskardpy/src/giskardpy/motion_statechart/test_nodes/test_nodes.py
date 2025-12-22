@@ -107,9 +107,7 @@ class TestRunAfterStop(Goal):
         self.cancel.start_condition = self.ticking1.observation_variable
 
     def build(self, context: BuildContext) -> NodeArtifacts:
-        return NodeArtifacts(
-            observation=cas.Expression(self.ticking2.observation_variable)
-        )
+        return NodeArtifacts(observation=sm.Scalar(self.ticking2.observation_variable))
 
 
 @dataclass(repr=False, eq=False)
@@ -137,9 +135,7 @@ class TestEndBeforeStart(Goal):
         self.node3.end_condition = self.node2.observation_variable
 
     def build(self, context: BuildContext) -> NodeArtifacts:
-        return NodeArtifacts(
-            observation=cas.Expression(self.node3.observation_variable)
-        )
+        return NodeArtifacts(observation=sm.Scalar(self.node3.observation_variable))
 
 
 @dataclass(repr=False, eq=False)
@@ -173,9 +169,7 @@ class TestRunAfterStopFromPause(Goal):
         self.cancel.start_condition = self.ticking2.observation_variable
 
     def build(self, context: BuildContext) -> NodeArtifacts:
-        return NodeArtifacts(
-            observation=cas.Expression(self.ticking1.observation_variable)
-        )
+        return NodeArtifacts(observation=sm.Scalar(self.ticking1.observation_variable))
 
 
 @dataclass(repr=False, eq=False)
@@ -201,10 +195,10 @@ class TestUnpauseUnknownFromParentPause(Goal):
         self.add_node(self.count_ticks1)
         self.add_node(Sequence(nodes=[self.count_ticks2, self.cancel]))
 
-        self.count_ticks1.pause_condition = cas.TrinaryUnknown
+        self.count_ticks1.pause_condition = sm.Scalar.const_trinary_unknown()
         self.count_ticks1.end_condition = self.count_ticks1.observation_variable
 
     def build(self, context: BuildContext) -> NodeArtifacts:
         return NodeArtifacts(
-            observation=cas.Expression(self.count_ticks1.observation_variable)
+            observation=sm.Scalar(self.count_ticks1.observation_variable)
         )
