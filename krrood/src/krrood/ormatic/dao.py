@@ -161,7 +161,7 @@ class ToDataAccessObjectState(DataAccessObjectState[ToDataAccessObjectWorkItem])
         alternative_base: Optional[Type[DataAccessObject]] = None,
     ):
         """
-        Add a new work item to the processing work_items.
+        Add a new work item to the processing queue.
 
         :param source_object: The object being converted.
         :param dao_instance: The DAO instance being populated.
