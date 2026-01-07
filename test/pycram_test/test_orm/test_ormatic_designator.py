@@ -114,6 +114,7 @@ def test_simple_plan(immutable_model_world):
         plan.perform()
     return plan
 
+
 def test_pose(database, test_simple_plan):
     session = database
     plan = test_simple_plan
@@ -194,6 +195,7 @@ def test_pose_creation(database, test_simple_plan):
     assert pose_result.position.y == 2.0
     assert pose_result.position.z == 3.0
     assert pose_result.database_id == raw_pose[0][0]
+
 
 # ORM Action Designator Tests
 
@@ -279,7 +281,7 @@ def test_transportAction(database, mutable_simple_pr2_world):
         Context.from_world(world),
         TransportActionDescription(
             world.get_body_by_name("milk.stl"),
-            PoseStamped.from_list([1.7, 0.2, 1.07], [0, 0, 0, 1], world.root),
+            PoseStamped.from_list([1.8, 0.2, 1.07], [0, 0, 0, 1], world.root),
             Arms.LEFT,
         ),
     )

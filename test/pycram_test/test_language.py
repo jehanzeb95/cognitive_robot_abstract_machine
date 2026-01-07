@@ -1,7 +1,6 @@
 import threading
 import time
 import pytest
-import numpy as np
 
 from pycram.datastructures.enums import TaskStatus, MonitorBehavior
 from pycram.failure_handling import RetryMonitor
@@ -235,10 +234,9 @@ def test_perform_desig(immutable_model_world):
     np.testing.assert_almost_equal(
         robot_view.root.global_pose.to_np()[:3, 3], [0.3, 0.3, 0], decimal=1
     )
-    assert (
-        world.state[world.get_degree_of_freedom_by_name("torso_lift_joint").id].position
-        == pytest.approx(0.3, abs=0.1)
-    )
+    assert world.state[
+        world.get_degree_of_freedom_by_name("torso_lift_joint").id
+    ].position == pytest.approx(0.3, abs=0.1)
 
 
 def test_perform_parallel(immutable_model_world):
@@ -349,7 +347,10 @@ def test_monitor_resume(immutable_model_world):
         return True
 
     plan = MonitorPlan(
-        monitor_func, context, SequentialPlan(context, act, act2), behavior=MonitorBehavior.RESUME
+        monitor_func,
+        context,
+        SequentialPlan(context, act, act2),
+        behavior=MonitorBehavior.RESUME,
     )
     with simulated_robot:
         plan.perform()
