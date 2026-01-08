@@ -10,3 +10,14 @@ tabulate
 N2G
 python-igraph
 rustworkx>=0.16.0
+scikit-learn>=1.6.1
+jax>=0.6.0
+jaxtyping>=0.3.2
+equinox>=0.12.1
+mlflow>=2.22.0
+optax>=0.2.4
+pyjpt>=0.1.32
+mlflow-skinny>=2.22.0
+dnutils
+arff
+deprecated
