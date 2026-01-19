@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import Iterable, Optional, Self
+from typing import Iterable, Optional, Self, Tuple
 
 import numpy as np
 from numpy._typing import NDArray
@@ -302,36 +302,27 @@ class DoubleDoor(SemanticAnnotation):
     door_0: Door = field(kw_only=True)
     door_1: Door = field(kw_only=True)
 
-    def calculate_leftmost_door_from_view_point(
+    def calculate_left_right_door_from_view_point(
         self, world_T_view_point: HomogeneousTransformationMatrix
-    ) -> Optional[Door]:
+    ) -> Tuple[Door, Door]:
         """
-        Calculate and return the leftmost door from a given view point, described in the world frame.
+        Calculate which door is the left and which is the right door based on a given view point.
+
+        :param world_T_view_point: The transformation matrix of the view point.
+
+        :return: A tuple containing the left and right door. the first door is the left door, the second door is the right door.
         """
-
-        return max(
-            [self.door_0, self.door_1],
-            key=lambda door: self._get_y_in_view(door, world_T_view_point),
-        )
-
-    def calculate_rightmost_door_from_view_point(
-        self, world_T_view_point: HomogeneousTransformationMatrix
-    ) -> Optional[Door]:
-        """
-        Calculate and return the rightmost door from a given view point, described in the world frame.
-        """
-
-        return min(
-            [self.door_0, self.door_1],
-            key=lambda door: self._get_y_in_view(door, world_T_view_point),
-        )
-
-    def _get_y_in_view(
-        self, door: Door, world_T_view_point: HomogeneousTransformationMatrix
-    ) -> float:
-        world_T_door = door.root.global_pose
-        view_point_T_door = world_T_view_point.inverse() @ world_T_door
-        return float(view_point_T_door.to_position().to_np()[1])
+        world_T_door_0 = self.door_0.root.global_pose
+        view_point_T_door_0 = world_T_view_point.inverse() @ world_T_door_0
+        world_T_door_1 = self.door_1.root.global_pose
+        view_point_T_door_1 = world_T_view_point.inverse() @ world_T_door_1
+        if (
+            view_point_T_door_0.to_position().to_np()[1]
+            > view_point_T_door_1.to_position().to_np()[1]
+        ):
+            return self.door_0, self.door_1
+        else:
+            return self.door_1, self.door_0
 
 
 @dataclass(eq=False)

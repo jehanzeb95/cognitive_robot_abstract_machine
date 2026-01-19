@@ -770,23 +770,15 @@ class TestFactories(unittest.TestCase):
         # View point at origin looking forward (identity)
         view_point_front = HomogeneousTransformationMatrix.from_xyz_rpy()
         self.assertEqual(
-            double_door.calculate_leftmost_door_from_view_point(view_point_front),
-            door_left,
-        )
-        self.assertEqual(
-            double_door.calculate_rightmost_door_from_view_point(view_point_front),
-            door_right,
+            double_door.calculate_left_right_door_from_view_point(view_point_front),
+            (door_left, door_right),
         )
 
         # View point at x=2 looking back (180 deg around Z)
         view_point_back = HomogeneousTransformationMatrix.from_xyz_rpy(x=2, yaw=np.pi)
         self.assertEqual(
-            double_door.calculate_leftmost_door_from_view_point(view_point_back),
-            door_right,
-        )
-        self.assertEqual(
-            double_door.calculate_rightmost_door_from_view_point(view_point_back),
-            door_left,
+            double_door.calculate_left_right_door_from_view_point(view_point_back),
+            (door_right, door_left),
         )
 
 
