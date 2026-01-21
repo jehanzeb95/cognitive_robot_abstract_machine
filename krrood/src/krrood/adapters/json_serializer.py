@@ -9,7 +9,7 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from types import NoneType
-from typing import List
+from typing import List, Optional
 
 from typing_extensions import Dict, Any, Self, Union, Type, TypeVar
 
@@ -164,20 +164,23 @@ class SubclassJSONSerializer:
         :param kwargs: Additional keyword arguments to pass to the constructor of the subclass.
         """
         for diff in diffs:
-            if hasattr(self, diff.attribute_name):
-                current_value = getattr(self, diff.attribute_name)
-                if isinstance(current_value, list):
-                    for item in diff.remove:
-                        current_value.remove(from_json(item, **kwargs))
-                    for item in diff.add:
-                        current_value.append(from_json(item, **kwargs))
-                else:
-                    if diff.add:
-                        setattr(
-                            self,
-                            diff.attribute_name,
-                            from_json(diff.add[0], **kwargs),
-                        )
+            if not hasattr(self, diff.attribute_name):
+                continue
+            self._apply_diff(diff, **kwargs)
+
+    def _apply_diff(self, diff: JSONAttributeDiff, **kwargs) -> None:
+        current_value = getattr(self, diff.attribute_name)
+        if isinstance(current_value, list):
+            for item in diff.remove:
+                current_value.remove(from_json(item, **kwargs))
+            for item in diff.add:
+                current_value.append(from_json(item, **kwargs))
+        else:
+            setattr(
+                self,
+                diff.attribute_name,
+                from_json(diff.add[0], **kwargs),
+            )
 
 
 def from_json(data: Dict[str, Any], **kwargs) -> Union[SubclassJSONSerializer, Any]:
@@ -261,28 +264,35 @@ def shallow_diff_json(
     """
     Create a shallow diff between two JSON dicts. Result describes the changes that need to be applied to first json to get second json.
     """
-    diff: List[JSONAttributeDiff] = []
-
     all_keys = original_json.keys() | new_json.keys()
-    for key in all_keys:
-        original_value = original_json.get(key)
-        new_value = new_json.get(key)
-        change = JSONAttributeDiff(attribute_name=key)
-        if isinstance(original_value, list_like_classes):
-            for item_to_check in original_value:
-                if item_to_check not in new_value:
-                    change.remove.append(from_json(item_to_check))
-            for item_to_check in new_value:
-                if item_to_check not in original_value:
-                    change.add.append(from_json(item_to_check))
-        else:
-            if original_value == new_value:
-                continue
-            change.add.append(from_json(new_value))
+    diffs: List[JSONAttributeDiff] = [
+        diff
+        for key in all_keys
+        if (diff := _compute_attribute_diff(original_json, new_json, key)) is not None
+    ]
+    return diffs
 
-        if change.add or change.remove:
-            diff.append(change)
-    return diff
+
+def _compute_attribute_diff(
+    original_json: Any, new_json: Any, key: str
+) -> Optional[JSONAttributeDiff]:
+    """
+    Compute the attribute diff for a single key between two JSON dicts.
+    """
+    original_value = original_json.get(key)
+    new_value = new_json.get(key)
+
+    if not isinstance(original_value, list_like_classes):
+        if original_value == new_value:
+            return None
+        return JSONAttributeDiff(attribute_name=key, add=[from_json(new_value)])
+
+    original, new = set(original_value), set(new_value)
+    add = list(map(from_json, new - original))
+    remove = list(map(from_json, original - new))
+    if not (add or remove):
+        return None
+    return JSONAttributeDiff(attribute_name=key, add=add, remove=remove)
 
 
 T = TypeVar("T")

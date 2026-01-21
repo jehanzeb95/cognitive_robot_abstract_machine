@@ -460,6 +460,9 @@ class HomogeneousTransformationMatrix(
         )
 
 
+TransformationMatrix = HomogeneousTransformationMatrix
+
+
 @dataclass(eq=False, init=False)
 class RotationMatrix(sm.SymbolicMathType, SpatialType, SubclassJSONSerializer):
     """
