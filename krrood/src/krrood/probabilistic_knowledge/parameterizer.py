@@ -13,7 +13,8 @@ from random_events.variable import Continuous, Integer, Symbolic, Variable
 from krrood.class_diagrams.class_diagram import WrappedClass
 from krrood.class_diagrams.wrapped_field import WrappedField
 
-SKIPPED_FIELD_TYPES = (datetime,)
+# added 'str' to prevent auxiliary fields like frame_id from being considered
+SKIPPED_FIELD_TYPES = (datetime, str)
 
 
 @dataclass
@@ -58,6 +59,9 @@ class Parameterizer:
         field_name = f"{prefix}.{wrapped_field.name}"
 
         if self.skip_field(wrapped_field):
+            return []
+
+        if wrapped_field.is_container:
             return []
 
         if wrapped_field.is_one_to_one_relationship and not wrapped_field.is_enum:

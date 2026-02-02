@@ -12,6 +12,7 @@ from typing_extensions import Optional, Union, List
 from semantic_digital_twin.robots.abstract_robot import Manipulator, AbstractRobot
 from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
 from semantic_digital_twin.world_description.world_entity import Body
+from krrood.entity_query_language.predicate import Symbol
 from .dataclasses import Rotations
 from .enums import Grasp, AxisIdentifier, ApproachDirection, VerticalAlignment
 from .pose import PoseStamped, PyCramVector3
@@ -21,7 +22,7 @@ from ..utils import translate_pose_along_local_axis
 
 
 @dataclass
-class GraspDescription:
+class GraspDescription(Symbol):
     """
     Describes a grasp configuration for a manipulator the description consists of the approach direction (the side from
     which to grasp e.g. FRONT, LEFT, etc and the vertical alignment (TOP, BOTTOM).

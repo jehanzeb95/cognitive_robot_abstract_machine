@@ -15,6 +15,7 @@ from semantic_digital_twin.world_description.world_entity import Body
 from typing_extensions import Self, Tuple, Optional, List, TYPE_CHECKING
 
 from .enums import AxisIdentifier, Arms
+from krrood.entity_query_language.predicate import Symbol
 from ..has_parameters import has_parameters, HasParameters
 from ..ros import Time as ROSTime
 from ..tf_transformations import (
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
 
 @has_parameters
 @dataclass
-class PyCramVector3(HasParameters):
+class PyCramVector3(HasParameters, Symbol):
     """
     A 3D vector with x, y and z coordinates.
     """
@@ -168,7 +169,7 @@ class PyCramVector3(HasParameters):
 
 @has_parameters
 @dataclass
-class PyCramQuaternion(HasParameters):
+class PyCramQuaternion(HasParameters, Symbol):
     """
     A quaternion with x, y, z and w components.
     """
@@ -304,7 +305,7 @@ class PyCramQuaternion(HasParameters):
 
 @has_parameters
 @dataclass
-class PyCramPose(HasParameters):
+class PyCramPose(HasParameters, Symbol):
     """
     A pose in 3D space.
     """
@@ -419,7 +420,7 @@ class PyCramPose(HasParameters):
 
 
 @dataclass
-class Header:
+class Header(Symbol):
     """
     A header with a timestamp.
     """
@@ -505,7 +506,7 @@ class Vector3Stamped(PyCramVector3):
 
 @has_parameters
 @dataclass
-class PoseStamped(HasParameters):
+class PoseStamped(HasParameters, Symbol):
     """
     A pose in 3D space with a timestamp.
     """

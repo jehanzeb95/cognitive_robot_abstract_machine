@@ -9,6 +9,7 @@ from typing import Optional
 from typing_extensions import TypeVar, ClassVar, Type
 
 from giskardpy.motion_statechart.graph_node import Task
+from krrood.entity_query_language.predicate import Symbol
 from krrood.ormatic.dao import HasGeneric
 from semantic_digital_twin.robots.abstract_robot import AbstractRobot
 from ...datastructures.enums import ExecutionType
@@ -50,7 +51,7 @@ class AlternativeMotion(HasGeneric[T], ABC):
 
 
 @dataclass
-class BaseMotion(DesignatorDescription):
+class BaseMotion(DesignatorDescription, Symbol):
 
     @abstractmethod
     def perform(self):
