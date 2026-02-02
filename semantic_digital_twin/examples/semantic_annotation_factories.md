@@ -20,7 +20,7 @@ having to wire all bodies, connections, and semantic annotations manually.
 
 Used Concepts:
 - [](world-structure-manipulation)
-- [Entity Query Language](https://abdelrhmanbassiouny.github.io/entity_query_language/intro.html)
+- [Entity Query Language](https://cram2.github.io/cognitive_robot_abstract_machine/krrood/eql/intro.html)
 - [](semantic_annotations)
 
 ## Create a drawer with a handle
@@ -30,7 +30,7 @@ from krrood.entity_query_language.entity import entity, variable
 from krrood.entity_query_language.entity_result_processors import an, the
 
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
-from semantic_digital_twin.spatial_types.spatial_types import TransformationMatrix
+from semantic_digital_twin.spatial_types.spatial_types import HomogeneousTransformationMatrix
 from semantic_digital_twin.semantic_annotations.factories import (
     DrawerFactory,
     ContainerFactory,

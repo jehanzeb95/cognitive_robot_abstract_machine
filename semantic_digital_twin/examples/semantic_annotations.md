@@ -23,7 +23,7 @@ This tutorial shows you how to apply semantic annotations to a world and how to 
 Used Concepts:
 - [](creating-custom-bodies)
 - [](world-structure-manipulation)
-- [Entity Query Language](https://abdelrhmanbassiouny.github.io/entity_query_language/intro.html)
+- [Entity Query Language](https://cram2.github.io/cognitive_robot_abstract_machine/krrood/eql/intro.html)
 
 First, let's create a simple world that contains a couple of apples.
 
