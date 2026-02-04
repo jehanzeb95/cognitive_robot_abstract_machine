@@ -99,6 +99,11 @@ from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.abstract_robot import Manipulator
 from semantic_digital_twin.robots.hsrb import HSRB
+from semantic_digital_twin.semantic_annotations.semantic_annotations import (
+    Handle,
+    Door,
+    Hinge,
+)
 from semantic_digital_twin.spatial_types import (
     HomogeneousTransformationMatrix,
     Vector3,
