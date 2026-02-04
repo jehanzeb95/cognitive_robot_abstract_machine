@@ -295,14 +295,15 @@ class DistanceGoal(FeatureFunctionGoal):
         )
 
         # An extra constraint that makes the execution more stable
-        artifacts.constraints.add_inequality_constraint_vector(
-            reference_velocities=[self.max_vel] * 3,
-            lower_errors=[0, 0, 0],
-            upper_errors=[0, 0, 0],
-            weights=[self.weight] * 3,
-            task_expression=root_V_diff[:3],
-            names=[f"{self.name}_extra1", f"{self.name}_extra2", f"{self.name}_extra3"],
-        )
+        for i, axis_name in enumerate(["x", "y", "z"]):
+            artifacts.constraints.add_inequality_constraint(
+                reference_velocity=self.max_vel,
+                lower_error=0,
+                upper_error=0,
+                weight=self.weight,
+                task_expression=root_V_diff[i],
+                name=f"{self.name}_extra_{axis_name}",
+            )
 
         artifacts.observation = sm.logic_and(
             sm.if_less_eq(expr, self.upper_limit, sm.Scalar(1), sm.Scalar(0)),
