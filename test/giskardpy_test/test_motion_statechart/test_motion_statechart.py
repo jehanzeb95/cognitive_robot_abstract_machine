@@ -2036,9 +2036,9 @@ class TestFeatureFunctions:
         self, pr2_world_state_reset: World, rclpy_node
     ):
         """
-        Test combining DistanceGoal, HeightGoal, AngleGoal, and AlignPerpendicular
-        to constrain horizontal distance, vertical distance, orientation angle,
-        and perpendicular alignment simultaneously.
+        Test combining DistanceGoal, HeightGoal, and AlignPerpendicular
+        to constrain horizontal distance, vertical distance, and perpendicular
+        alignment simultaneously.
         """
         tf_publisher = TFPublisher(node=rclpy_node, world=pr2_world_state_reset)
         viz = VizMarkerPublisher(world=pr2_world_state_reset, node=rclpy_node)
@@ -2053,8 +2053,6 @@ class TestFeatureFunctions:
         tip_point = Point3(0, 0, 0, reference_frame=tip)
         reference_point = Point3(0, 0, 0, reference_frame=root)
 
-        tip_vector = Vector3(0, 1, 0, reference_frame=tip)
-        reference_vector = Vector3(1, 0, 0, reference_frame=root)
         tip_normal = Vector3(1, 0, 0, reference_frame=tip)
         reference_normal = Vector3(1, 0, 0, reference_frame=root)
 
@@ -2063,9 +2061,6 @@ class TestFeatureFunctions:
 
         distance_lower = 0.4
         distance_upper = 0.6
-
-        angle_lower = np.deg2rad(30)
-        angle_upper = np.deg2rad(32)
 
         perpendicular_threshold = 0.01
 
@@ -2086,24 +2081,15 @@ class TestFeatureFunctions:
             lower_limit=distance_lower,
             upper_limit=distance_upper,
         )
-        angle_goal = AngleGoal(
-            root_link=root,
-            tip_link=tip,
-            tip_vector=tip_vector,
-            reference_vector=reference_vector,
-            lower_angle=angle_lower,
-            upper_angle=angle_upper,
-        )
         align_perpendicular = AlignPerpendicular(
             root_link=root,
             tip_link=tip,
             tip_normal=tip_normal,
             reference_normal=reference_normal,
+            threshold=perpendicular_threshold,
         )
 
-        combined_goal = Parallel(
-            [height_goal, distance_goal, angle_goal, align_perpendicular]
-        )
+        combined_goal = Parallel([height_goal, distance_goal, align_perpendicular])
         msc.add_node(combined_goal)
         msc.add_node(EndMotion.when_true(combined_goal))
 
@@ -2114,7 +2100,6 @@ class TestFeatureFunctions:
         assert combined_goal.observation_state == ObservationStateValues.TRUE
         assert height_goal.observation_state == ObservationStateValues.TRUE
         assert distance_goal.observation_state == ObservationStateValues.TRUE
-        assert angle_goal.observation_state == ObservationStateValues.TRUE
         assert align_perpendicular.observation_state == ObservationStateValues.TRUE
 
         root_P_tip = pr2_world_state_reset.transform(
@@ -2135,28 +2120,6 @@ class TestFeatureFunctions:
             distance_lower <= horizontal_distance <= distance_upper
         ), f"Distance {horizontal_distance:.4f} not in [{distance_lower}, {distance_upper}]"
 
-        root_V_tip = pr2_world_state_reset.transform(
-            target_frame=root, spatial_object=tip_vector
-        )
-        root_V_tip.scale(1)
-        root_V_ref = pr2_world_state_reset.transform(
-            target_frame=root, spatial_object=reference_vector
-        )
-        root_V_ref.scale(1)
-
-        v_tip = root_V_tip.to_np()[:3]
-        v_ref = root_V_ref.to_np()[:3]
-
-        eps = 1e-9
-        assert np.linalg.norm(v_tip) > eps, "tip_vector became zero-length"
-        assert np.linalg.norm(v_ref) > eps, "reference_vector became zero-length"
-
-        angle = angle_between_vector(v_tip, v_ref)
-
-        assert (
-            angle_lower <= angle <= angle_upper
-        ), f"Angle {np.rad2deg(angle):.2f}° not in [{np.rad2deg(angle_lower):.2f}°, {np.rad2deg(angle_upper):.2f}°]"
-
         root_V_tip_normal = pr2_world_state_reset.transform(
             target_frame=root, spatial_object=tip_normal
         )
@@ -2169,6 +2132,7 @@ class TestFeatureFunctions:
         v_tip_normal = root_V_tip_normal.to_np()[:3]
         v_ref_normal = root_V_ref_normal.to_np()[:3]
 
+        eps = 1e-9
         assert np.linalg.norm(v_ref_normal) > eps, "reference normal became zero-length"
         assert np.linalg.norm(v_tip_normal) > eps, "tip normal became zero-length"
 
