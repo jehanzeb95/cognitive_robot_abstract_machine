@@ -33,6 +33,7 @@ from giskardpy.motion_statechart.goals.collision_avoidance import (
     CollisionAvoidance,
 )
 from giskardpy.motion_statechart.goals.open_close import Open, Close
+from giskardpy.motion_statechart.goals.unlatch_door import UnlatchDoor
 from giskardpy.motion_statechart.goals.templates import Sequence, Parallel
 from giskardpy.motion_statechart.graph_node import (
     EndMotion,
@@ -70,6 +71,8 @@ from giskardpy.motion_statechart.tasks.feature_functions import (
     DistanceGoal,
     HeightGoal,
 )
+
+from giskardpy.motion_statechart.tasks.grasp_bar import GraspBar, GraspBarOffset
 from giskardpy.motion_statechart.tasks.joint_tasks import JointPositionList, JointState
 from giskardpy.motion_statechart.tasks.pointing import Pointing, PointingCone
 from giskardpy.motion_statechart.test_nodes.test_nodes import (
@@ -2472,6 +2475,359 @@ def test_angle_goal(pr2_world_state_reset: World):
     assert (
         lower_angle <= angle <= upper_angle
     ), f"AngleGoal failed: final angle {angle:.6f} rad not in [{lower_angle:.6f}, {upper_angle:.6f}]"
+
+
+class TestGraspBarTasks:
+    """Test suite for GraspBar and GraspBarOffset tasks."""
+
+    def test_grasp_bar_basic(self, pr2_world_state_reset: World):
+        """
+        Test basic GraspBar functionality - grasping a horizontal bar.
+        Verifies the tip aligns with the bar axis and positions along the bar.
+        """
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+
+        # Create a horizontal bar in front of the robot
+        bar_center = Point3(0.6, 0.0, 1.0, reference_frame=root)
+        bar_axis = Vector3.X(reference_frame=root)
+        bar_length = 0.3
+        tip_grasp_axis = Vector3.X(reference_frame=tip)
+
+        msc = MotionStatechart()
+        grasp_bar = GraspBar(
+            root_link=root,
+            tip_link=tip,
+            tip_grasp_axis=tip_grasp_axis,
+            bar_center=bar_center,
+            bar_axis=bar_axis,
+            bar_length=bar_length,
+            threshold=0.015,
+        )
+        msc.add_node(grasp_bar)
+        msc.add_node(EndMotion.when_true(grasp_bar))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+        kin_sim.tick_until_end()
+
+        assert grasp_bar.observation_state == ObservationStateValues.TRUE
+
+        # Verify tip grasp axis is aligned with bar axis
+        root_V_bar_axis = pr2_world_state_reset.transform(
+            target_frame=root, spatial_object=bar_axis
+        )
+        root_V_bar_axis.scale(1)
+
+        tip_V_grasp = pr2_world_state_reset.transform(
+            target_frame=root, spatial_object=tip_grasp_axis
+        )
+        tip_V_grasp.scale(1)
+
+        v_bar = root_V_bar_axis.to_np()[:3]
+        v_grasp = tip_V_grasp.to_np()[:3]
+
+        # Check alignment (should be parallel or anti-parallel)
+        alignment_angle = angle_between_vector(v_bar, v_grasp)
+        assert (
+            alignment_angle <= grasp_bar.threshold
+            or abs(alignment_angle - np.pi) <= grasp_bar.threshold
+        ), f"Grasp axis not aligned with bar axis: {alignment_angle:.6f} rad"
+
+    def test_grasp_bar_offset_basic(self, pr2_world_state_reset: World):
+        """
+        Test GraspBarOffset with handle link and grasp offset.
+        This is the core functionality for grasping handles with offset.
+        """
+        with pr2_world_state_reset.modify_world():
+            # Create a handle body
+            handle = Body(
+                name=PrefixedName("test_handle"),
+                collision=ShapeCollection(shapes=[Box(scale=Scale(0.05, 0.3, 0.05))]),
+            )
+            handle_connection = FixedConnection(
+                parent=pr2_world_state_reset.root,
+                child=handle,
+                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=0.6, y=0.0, z=1.0, reference_frame=pr2_world_state_reset.root
+                ),
+            )
+            pr2_world_state_reset.add_connection(handle_connection)
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+        handle_link = pr2_world_state_reset.get_body_by_name("test_handle")
+
+        # Bar properties in handle frame
+        bar_center = Point3(0.0, 0.0, 0.0, reference_frame=handle_link)
+        bar_axis = Vector3.Y(reference_frame=handle_link)
+        bar_length = 0.3
+        tip_grasp_axis = Vector3.X(reference_frame=tip)
+        grasp_offset = Vector3(0.05, 0.0, 0.0, reference_frame=handle_link)
+
+        msc = MotionStatechart()
+        grasp_bar_offset = GraspBarOffset(
+            root_link=root,
+            tip_link=tip,
+            tip_grasp_axis=tip_grasp_axis,
+            bar_center=bar_center,
+            bar_axis=bar_axis,
+            bar_length=bar_length,
+            grasp_axis_offset=grasp_offset,
+            handle_link=handle_link,
+            threshold=0.015,
+        )
+        msc.add_node(grasp_bar_offset)
+        msc.add_node(EndMotion.when_true(grasp_bar_offset))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+        kin_sim.tick_until_end()
+
+        assert grasp_bar_offset.observation_state == ObservationStateValues.TRUE
+
+    def test_grasp_bar_binding_policies(self, pr2_world_state_reset: World):
+        """
+        Test GraspBar with Bind_at_build policy.
+        Verifies the binding policy mechanism works correctly.
+        """
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+
+        # Create a bar in front of the robot
+        bar_center = Point3(0.6, -0.2, 1.0, reference_frame=root)
+        bar_axis = Vector3.X(reference_frame=root)
+        bar_length = 0.3
+        tip_grasp_axis = Vector3.X(reference_frame=tip)
+
+        msc = MotionStatechart()
+        grasp_bar = GraspBar(
+            root_link=root,
+            tip_link=tip,
+            tip_grasp_axis=tip_grasp_axis,
+            bar_center=bar_center,
+            bar_axis=bar_axis,
+            bar_length=bar_length,
+            binding_policy=GoalBindingPolicy.Bind_at_build,
+            threshold=0.015,
+        )
+        msc.add_node(grasp_bar)
+        msc.add_node(EndMotion.when_true(grasp_bar))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+        kin_sim.tick_until_end()
+
+        assert grasp_bar.observation_state == ObservationStateValues.TRUE
+
+
+class TestUnlatchDoor:
+    """Test suite for UnlatchDoor goal."""
+
+    def test_unlatch_door_basic(self, pr2_world_state_reset: World):
+        """
+        Test basic UnlatchDoor functionality with a door handle.
+        Verifies that the handle is opened to its maximum limit.
+        """
+        with pr2_world_state_reset.modify_world():
+            # Create a door handle
+            handle = Body(
+                name=PrefixedName("door_handle"),
+                collision=ShapeCollection(shapes=[Box(scale=Scale(0.15, 0.05, 0.05))]),
+            )
+
+            # Create revolute connection for handle with limits
+            lower_limits = DerivativeMap()
+            lower_limits.position = 0.0
+            lower_limits.velocity = -1.0
+            upper_limits = DerivativeMap()
+            upper_limits.position = np.pi / 4  # 45 degrees max rotation
+            upper_limits.velocity = 1.0
+
+            handle_dof = DegreeOfFreedom(
+                name=PrefixedName("handle_joint"),
+                limits=DegreeOfFreedomLimits(lower=lower_limits, upper=upper_limits),
+            )
+            pr2_world_state_reset.add_degree_of_freedom(handle_dof)
+
+            handle_connection = RevoluteConnection(
+                parent=pr2_world_state_reset.root,
+                child=handle,
+                axis=Vector3.Z(),
+                dof_id=handle_dof.id,
+                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=0.6, y=0.0, z=1.0, reference_frame=pr2_world_state_reset.root
+                ),
+            )
+            pr2_world_state_reset.add_connection(handle_connection)
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        handle_body = pr2_world_state_reset.get_body_by_name("door_handle")
+
+        # Test UnlatchDoor
+        msc = MotionStatechart()
+        unlatch = UnlatchDoor(
+            tip_link=tip,
+            handle_name=handle_body,
+        )
+        msc.add_node(unlatch)
+        msc.add_node(EndMotion.when_true(unlatch))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+        kin_sim.tick_until_end()
+
+        # Verify handle reached maximum position
+        assert unlatch.observation_state == ObservationStateValues.TRUE
+        assert np.isclose(handle_connection.position, upper_limits.position, atol=0.01)
+
+    def test_unlatch_door_with_custom_limit(self, pr2_world_state_reset: World):
+        """
+        Test UnlatchDoor with custom handle_limit parameter.
+        Verifies that the handle stops at the specified limit rather than maximum.
+        """
+        with pr2_world_state_reset.modify_world():
+            # Create a door handle
+            handle = Body(
+                name=PrefixedName("door_handle_limited"),
+                collision=ShapeCollection(shapes=[Box(scale=Scale(0.15, 0.05, 0.05))]),
+            )
+
+            # Create revolute connection with larger max limit
+            lower_limits = DerivativeMap()
+            lower_limits.position = 0.0
+            lower_limits.velocity = -1.0
+            upper_limits = DerivativeMap()
+            upper_limits.position = np.pi / 2  # 90 degrees max
+            upper_limits.velocity = 1.0
+
+            handle_dof = DegreeOfFreedom(
+                name=PrefixedName("handle_joint_limited"),
+                limits=DegreeOfFreedomLimits(lower=lower_limits, upper=upper_limits),
+            )
+            pr2_world_state_reset.add_degree_of_freedom(handle_dof)
+
+            handle_connection = RevoluteConnection(
+                parent=pr2_world_state_reset.root,
+                child=handle,
+                axis=Vector3.Z(),
+                dof_id=handle_dof.id,
+                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=0.6, y=0.0, z=1.0, reference_frame=pr2_world_state_reset.root
+                ),
+            )
+            pr2_world_state_reset.add_connection(handle_connection)
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        handle_body = pr2_world_state_reset.get_body_by_name("door_handle_limited")
+
+        # Custom limit less than maximum
+        custom_limit = np.pi / 6  # 30 degrees instead of 90
+
+        msc = MotionStatechart()
+        unlatch = UnlatchDoor(
+            tip_link=tip,
+            handle_name=handle_body,
+            handle_limit=custom_limit,
+        )
+        msc.add_node(unlatch)
+        msc.add_node(EndMotion.when_true(unlatch))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+        kin_sim.tick_until_end()
+
+        # Verify handle stopped at custom limit, not maximum
+        assert unlatch.observation_state == ObservationStateValues.TRUE
+        assert np.isclose(handle_connection.position, custom_limit, atol=0.01)
+        assert handle_connection.position < upper_limits.position
+
+    def test_unlatch_door_with_sequence(self, pr2_world_state_reset: World):
+        """
+        Test UnlatchDoor as part of a sequential task.
+        First move to a neutral position, then unlatch the handle.
+        """
+        with pr2_world_state_reset.modify_world():
+            # Create a door handle
+            handle = Body(
+                name=PrefixedName("door_handle_seq"),
+                collision=ShapeCollection(shapes=[Box(scale=Scale(0.15, 0.05, 0.05))]),
+            )
+
+            # Create revolute connection for handle
+            lower_limits = DerivativeMap()
+            lower_limits.position = 0.0
+            lower_limits.velocity = -1.0
+            upper_limits = DerivativeMap()
+            upper_limits.position = np.pi / 4
+            upper_limits.velocity = 1.0
+
+            handle_dof = DegreeOfFreedom(
+                name=PrefixedName("handle_joint_seq"),
+                limits=DegreeOfFreedomLimits(lower=lower_limits, upper=upper_limits),
+            )
+            pr2_world_state_reset.add_degree_of_freedom(handle_dof)
+
+            handle_connection = RevoluteConnection(
+                parent=pr2_world_state_reset.root,
+                child=handle,
+                axis=Vector3.Z(),
+                dof_id=handle_dof.id,
+                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=0.6, y=0.0, z=1.0, reference_frame=pr2_world_state_reset.root
+                ),
+            )
+            pr2_world_state_reset.add_connection(handle_connection)
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        handle_body = pr2_world_state_reset.get_body_by_name("door_handle_seq")
+
+        msc = MotionStatechart()
+
+        # Create sequence: unlatch, then verify with monitor
+        unlatch = UnlatchDoor(
+            tip_link=tip,
+            handle_name=handle_body,
+        )
+
+        # Add a monitor to verify the handle stays at the target position
+        handle_monitor = JointPositionReached(
+            connection=handle_connection,
+            position=upper_limits.position,
+            threshold=0.01,
+            name="verify_handle_position",
+        )
+
+        sequence = Sequence([unlatch, handle_monitor])
+        msc.add_node(sequence)
+        msc.add_node(EndMotion.when_true(sequence))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+        kin_sim.tick_until_end()
+
+        # Verify both tasks completed
+        assert unlatch.observation_state == ObservationStateValues.TRUE
+        assert handle_monitor.observation_state == ObservationStateValues.TRUE
+        assert np.isclose(handle_connection.position, upper_limits.position, atol=0.01)
 
 
 class TestVelocityTasks:
