@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from giskardpy.data_types.exceptions import DuplicateNameException
+from giskardpy.motion_statechart.exceptions import NodeInitializationError
 from giskardpy.executor import Executor, SimulationPacer
 from giskardpy.model.collision_matrix_manager import CollisionRequest
 from giskardpy.model.collision_world_syncer import CollisionCheckerLib
@@ -35,6 +36,14 @@ from giskardpy.motion_statechart.goals.collision_avoidance import (
 from giskardpy.motion_statechart.goals.open_close import Open, Close
 from giskardpy.motion_statechart.goals.unlatch_door import UnlatchDoor
 from giskardpy.motion_statechart.goals.open_door import OpenDoorGoal
+from giskardpy.motion_statechart.goals.pre_push_door import PrePushDoor
+from giskardpy.motion_statechart.goals.align_to_push_door import AlignToPushDoor
+from giskardpy.motion_statechart.goals.move_around_hinge import (
+    MoveAroundHinge,
+    MoveAroundHingeAlign,
+    _WaypointTask,
+    _PointReachedMonitor,
+)
 from giskardpy.motion_statechart.goals.templates import Sequence, Parallel
 from giskardpy.motion_statechart.graph_node import (
     EndMotion,
@@ -3406,6 +3415,777 @@ class TestOpenDoorGoal:
         unlatch_nodes = [n for n in open_door_copy.nodes if isinstance(n, UnlatchDoor)]
         assert len(unlatch_nodes) == 1
         assert unlatch_nodes[0].handle_limit == custom_handle_limit
+
+
+class TestPrePushDoor:
+    """Test suite for PrePushDoor goal."""
+
+    def _create_door_world(
+        self,
+        world: World,
+        door_name: str,
+        handle_name: str,
+        hinge_name: str,
+        initial_angle: float,
+        max_angle: float = np.pi / 2,
+    ):
+        """
+        Helper to create a door world with hinge, door body, and handle.
+        Returns (door_connection, handle_connection).
+        """
+        with world.modify_world():
+            door = Body(
+                name=PrefixedName(door_name),
+                collision=ShapeCollection(shapes=[Box(scale=Scale(0.8, 0.05, 2.0))]),
+            )
+
+            lower_limits = DerivativeMap()
+            lower_limits.position = 0.0
+            lower_limits.velocity = -1.0
+            upper_limits = DerivativeMap()
+            upper_limits.position = max_angle
+            upper_limits.velocity = 1.0
+
+            door_dof = DegreeOfFreedom(
+                name=PrefixedName(hinge_name),
+                limits=DegreeOfFreedomLimits(lower=lower_limits, upper=upper_limits),
+            )
+            world.add_degree_of_freedom(door_dof)
+
+            door_connection = RevoluteConnection(
+                parent=world.root,
+                child=door,
+                axis=Vector3.Z(),
+                dof_id=door_dof.id,
+                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=1.0, y=0.0, z=0.0, reference_frame=world.root
+                ),
+            )
+            world.add_connection(door_connection)
+
+            handle = Body(
+                name=PrefixedName(handle_name),
+                collision=ShapeCollection(shapes=[Box(scale=Scale(0.1, 0.1, 0.05))]),
+            )
+
+            handle_lower = DerivativeMap()
+            handle_lower.position = 0.0
+            handle_lower.velocity = -1.0
+            handle_upper = DerivativeMap()
+            handle_upper.position = np.pi / 4
+            handle_upper.velocity = 1.0
+
+            handle_dof = DegreeOfFreedom(
+                name=PrefixedName(f"{handle_name}_joint"),
+                limits=DegreeOfFreedomLimits(lower=handle_lower, upper=handle_upper),
+            )
+            world.add_degree_of_freedom(handle_dof)
+
+            handle_connection = RevoluteConnection(
+                parent=door,
+                child=handle,
+                axis=Vector3.Z(),
+                dof_id=handle_dof.id,
+                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=0.35, y=0.0, z=1.0, reference_frame=door
+                ),
+            )
+            world.add_connection(handle_connection)
+
+        msc = MotionStatechart()
+        seed = SetSeedConfiguration(
+            seed_configuration=JointState.from_mapping({door_connection: initial_angle})
+        )
+        msc.add_node(seed)
+        msc.add_node(EndMotion.when_true(seed))
+        kin_sim = Executor(world=world)
+        kin_sim.compile(motion_statechart=msc)
+        kin_sim.tick_until_end()
+
+        return door_connection, handle_connection
+
+    def test_pre_push_door_expand_creates_task(self, pr2_world_state_reset: World):
+        """
+        Test that PrePushDoor.expand() creates exactly one child task node.
+        """
+        door_connection, handle_connection = self._create_door_world(
+            world=pr2_world_state_reset,
+            door_name="door",
+            handle_name="handle",
+            hinge_name="hinge",
+            initial_angle=0.0,
+        )
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+        door_body = pr2_world_state_reset.get_body_by_name("door")
+        handle_body = pr2_world_state_reset.get_body_by_name("handle")
+
+        msc = MotionStatechart()
+        goal = PrePushDoor(
+            root_link=root,
+            tip_link=tip,
+            door_object=door_body,
+            door_handle=handle_body,
+        )
+        msc.add_node(goal)
+        msc.add_node(EndMotion.when_true(goal))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+
+        assert len(goal.nodes) == 1
+        assert goal.nodes[0].name == "pre push door"
+
+    def test_pre_push_door_task_is_child_of_goal(self, pr2_world_state_reset: World):
+        """
+        Test that the created task node has the goal as its parent.
+        """
+        door_connection, handle_connection = self._create_door_world(
+            world=pr2_world_state_reset,
+            door_name="door2",
+            handle_name="handle2",
+            hinge_name="hinge2",
+            initial_angle=0.0,
+        )
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+        door_body = pr2_world_state_reset.get_body_by_name("door2")
+        handle_body = pr2_world_state_reset.get_body_by_name("handle2")
+
+        msc = MotionStatechart()
+        goal = PrePushDoor(
+            root_link=root,
+            tip_link=tip,
+            door_object=door_body,
+            door_handle=handle_body,
+        )
+        msc.add_node(goal)
+        msc.add_node(EndMotion.when_true(goal))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+
+        task = goal.nodes[0]
+        assert task.parent_node == goal
+
+    def test_pre_push_door_custom_velocity_and_weight(
+        self, pr2_world_state_reset: World
+    ):
+        """
+        Test that custom reference_linear_velocity and weight are passed through correctly.
+        """
+        door_connection, handle_connection = self._create_door_world(
+            world=pr2_world_state_reset,
+            door_name="door3",
+            handle_name="handle3",
+            hinge_name="hinge3",
+            initial_angle=0.0,
+        )
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+        door_body = pr2_world_state_reset.get_body_by_name("door3")
+        handle_body = pr2_world_state_reset.get_body_by_name("handle3")
+
+        custom_velocity = 0.05
+        custom_weight = 0.001
+
+        msc = MotionStatechart()
+        goal = PrePushDoor(
+            root_link=root,
+            tip_link=tip,
+            door_object=door_body,
+            door_handle=handle_body,
+            reference_linear_velocity=custom_velocity,
+            weight=custom_weight,
+        )
+        msc.add_node(goal)
+        msc.add_node(EndMotion.when_true(goal))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+
+        task = goal.nodes[0]
+        assert task.reference_velocity == custom_velocity
+        assert task.weight == custom_weight
+
+
+class TestAlignToPushDoor:
+    """Test suite for AlignToPushDoor goal."""
+
+    def _create_door_world(
+        self,
+        world: World,
+        door_name: str,
+        handle_name: str,
+        hinge_name: str,
+        initial_angle: float,
+        max_angle: float = np.pi / 2,
+    ):
+        """
+        Helper to create a door world with hinge, door body, and handle.
+        Returns (door_connection, handle_connection).
+        """
+        with world.modify_world():
+            door = Body(
+                name=PrefixedName(door_name),
+                collision=ShapeCollection(shapes=[Box(scale=Scale(0.8, 0.05, 2.0))]),
+            )
+
+            lower_limits = DerivativeMap()
+            lower_limits.position = 0.0
+            lower_limits.velocity = -1.0
+            upper_limits = DerivativeMap()
+            upper_limits.position = max_angle
+            upper_limits.velocity = 1.0
+
+            door_dof = DegreeOfFreedom(
+                name=PrefixedName(hinge_name),
+                limits=DegreeOfFreedomLimits(lower=lower_limits, upper=upper_limits),
+            )
+            world.add_degree_of_freedom(door_dof)
+
+            door_connection = RevoluteConnection(
+                parent=world.root,
+                child=door,
+                axis=Vector3.Z(),
+                dof_id=door_dof.id,
+                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=1.0, y=0.0, z=0.0, reference_frame=world.root
+                ),
+            )
+            world.add_connection(door_connection)
+
+            handle = Body(
+                name=PrefixedName(handle_name),
+                collision=ShapeCollection(shapes=[Box(scale=Scale(0.1, 0.1, 0.05))]),
+            )
+
+            handle_lower = DerivativeMap()
+            handle_lower.position = 0.0
+            handle_lower.velocity = -1.0
+            handle_upper = DerivativeMap()
+            handle_upper.position = np.pi / 4
+            handle_upper.velocity = 1.0
+
+            handle_dof = DegreeOfFreedom(
+                name=PrefixedName(f"{handle_name}_joint"),
+                limits=DegreeOfFreedomLimits(lower=handle_lower, upper=handle_upper),
+            )
+            world.add_degree_of_freedom(handle_dof)
+
+            handle_connection = RevoluteConnection(
+                parent=door,
+                child=handle,
+                axis=Vector3.Z(),
+                dof_id=handle_dof.id,
+                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=0.35, y=0.0, z=1.0, reference_frame=door
+                ),
+            )
+            world.add_connection(handle_connection)
+
+        # Set initial door angle via SetSeedConfiguration
+        msc = MotionStatechart()
+        seed = SetSeedConfiguration(
+            seed_configuration=JointState.from_mapping({door_connection: initial_angle})
+        )
+        msc.add_node(seed)
+        msc.add_node(EndMotion.when_true(seed))
+
+        kin_sim = Executor(world=world)
+        kin_sim.compile(motion_statechart=msc)
+        kin_sim.tick_until_end()
+
+        return door_connection, handle_connection
+
+    def test_align_to_push_door_raises_when_door_not_open_enough(
+        self, pr2_world_state_reset: World
+    ):
+        """
+        Test that AlignToPushDoor raises NodeInitializationError when the door
+        angle is below the minimum threshold (upper_limit / 4).
+        """
+        door_connection, handle_connection = self._create_door_world(
+            world=pr2_world_state_reset,
+            door_name="door_closed",
+            handle_name="handle_closed",
+            hinge_name="hinge_closed",
+            initial_angle=0.0,  # Door is fully closed
+            max_angle=np.pi / 2,
+        )
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+        door_body = pr2_world_state_reset.get_body_by_name("door_closed")
+        handle_body = pr2_world_state_reset.get_body_by_name("handle_closed")
+
+        msc = MotionStatechart()
+        align = AlignToPushDoor(
+            root_link=root,
+            tip_link=tip,
+            door_object=door_body,
+            door_handle=handle_body,
+            tip_gripper_axis=Vector3.X(reference_frame=tip),
+        )
+        msc.add_node(align)
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        with pytest.raises(NodeInitializationError):
+            kin_sim.compile(motion_statechart=msc)
+
+    def test_align_to_push_door_raises_below_minimum_angle(
+        self, pr2_world_state_reset: World
+    ):
+        """
+        Test that AlignToPushDoor raises NodeInitializationError when door angle
+        is just below the threshold (upper_limit / 4).
+        """
+        max_angle = np.pi / 2
+        # Set angle just below threshold (threshold = max_angle / 4 = pi/8)
+        below_threshold_angle = (max_angle / 4) - 0.01
+
+        door_connection, handle_connection = self._create_door_world(
+            world=pr2_world_state_reset,
+            door_name="door_below",
+            handle_name="handle_below",
+            hinge_name="hinge_below",
+            initial_angle=below_threshold_angle,
+            max_angle=max_angle,
+        )
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+        door_body = pr2_world_state_reset.get_body_by_name("door_below")
+        handle_body = pr2_world_state_reset.get_body_by_name("handle_below")
+
+        msc = MotionStatechart()
+        align = AlignToPushDoor(
+            root_link=root,
+            tip_link=tip,
+            door_object=door_body,
+            door_handle=handle_body,
+            tip_gripper_axis=Vector3.X(reference_frame=tip),
+        )
+        msc.add_node(align)
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        with pytest.raises(NodeInitializationError):
+            kin_sim.compile(motion_statechart=msc)
+
+    def test_align_to_push_door_creates_task_when_door_open_enough(
+        self, pr2_world_state_reset: World
+    ):
+        """
+        Test that AlignToPushDoor successfully creates a child task when the
+        door angle is above the minimum threshold.
+        """
+        max_angle = np.pi / 2
+        # Set angle above threshold (threshold = max_angle / 4 = pi/8)
+        above_threshold_angle = (max_angle / 4) + 0.1
+
+        door_connection, handle_connection = self._create_door_world(
+            world=pr2_world_state_reset,
+            door_name="door_open",
+            handle_name="handle_open",
+            hinge_name="hinge_open",
+            initial_angle=above_threshold_angle,
+            max_angle=max_angle,
+        )
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+        door_body = pr2_world_state_reset.get_body_by_name("door_open")
+        handle_body = pr2_world_state_reset.get_body_by_name("handle_open")
+
+        msc = MotionStatechart()
+        align = AlignToPushDoor(
+            root_link=root,
+            tip_link=tip,
+            door_object=door_body,
+            door_handle=handle_body,
+            tip_gripper_axis=Vector3.X(reference_frame=tip),
+        )
+        msc.add_node(align)
+        msc.add_node(EndMotion.when_true(align))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        # Should compile without error
+        kin_sim.compile(motion_statechart=msc)
+
+        # Verify child task was created
+        assert len(align.nodes) == 1, "Should have 1 child task node"
+        assert align.nodes[0].name == "align_to_push_door"
+
+
+class TestMoveAroundHinge:
+    """Test suite for MoveAroundHinge goal."""
+
+    def _create_door_world(
+        self,
+        world: World,
+        door_name: str,
+        handle_name: str,
+        hinge_name: str,
+        initial_angle: float,
+        max_angle: float = np.pi / 2,
+    ):
+        """
+        Helper to create a door world with hinge, door body, and handle.
+        Returns (door_connection, handle_connection).
+        """
+        with world.modify_world():
+            door = Body(
+                name=PrefixedName(door_name),
+                collision=ShapeCollection(shapes=[Box(scale=Scale(0.8, 0.05, 2.0))]),
+            )
+
+            lower_limits = DerivativeMap()
+            lower_limits.position = 0.0
+            lower_limits.velocity = -1.0
+            upper_limits = DerivativeMap()
+            upper_limits.position = max_angle
+            upper_limits.velocity = 1.0
+
+            door_dof = DegreeOfFreedom(
+                name=PrefixedName(hinge_name),
+                limits=DegreeOfFreedomLimits(lower=lower_limits, upper=upper_limits),
+            )
+            world.add_degree_of_freedom(door_dof)
+
+            door_connection = RevoluteConnection(
+                parent=world.root,
+                child=door,
+                axis=Vector3.Z(),
+                dof_id=door_dof.id,
+                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=1.0, y=0.0, z=0.0, reference_frame=world.root
+                ),
+            )
+            world.add_connection(door_connection)
+
+            handle = Body(
+                name=PrefixedName(handle_name),
+                collision=ShapeCollection(shapes=[Box(scale=Scale(0.1, 0.1, 0.05))]),
+            )
+
+            handle_lower = DerivativeMap()
+            handle_lower.position = 0.0
+            handle_lower.velocity = -1.0
+            handle_upper = DerivativeMap()
+            handle_upper.position = np.pi / 4
+            handle_upper.velocity = 1.0
+
+            handle_dof = DegreeOfFreedom(
+                name=PrefixedName(f"{handle_name}_joint"),
+                limits=DegreeOfFreedomLimits(lower=handle_lower, upper=handle_upper),
+            )
+            world.add_degree_of_freedom(handle_dof)
+
+            handle_connection = RevoluteConnection(
+                parent=door,
+                child=handle,
+                axis=Vector3.Z(),
+                dof_id=handle_dof.id,
+                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=0.35, y=0.0, z=1.0, reference_frame=door
+                ),
+            )
+            world.add_connection(handle_connection)
+
+        msc = MotionStatechart()
+        seed = SetSeedConfiguration(
+            seed_configuration=JointState.from_mapping({door_connection: initial_angle})
+        )
+        msc.add_node(seed)
+        msc.add_node(EndMotion.when_true(seed))
+        kin_sim = Executor(world=world)
+        kin_sim.compile(motion_statechart=msc)
+        kin_sim.tick_until_end()
+
+        return door_connection, handle_connection
+
+    def test_move_around_hinge_default_multipliers_creates_three_waypoints(
+        self, pr2_world_state_reset: World
+    ):
+        """
+        Test that expand() with default multipliers creates 3 waypoint tasks and 3 monitors.
+        """
+        self._create_door_world(
+            world=pr2_world_state_reset,
+            door_name="mah_door1",
+            handle_name="mah_handle1",
+            hinge_name="mah_hinge1",
+            initial_angle=np.pi / 4,
+        )
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+        handle_body = pr2_world_state_reset.get_body_by_name("mah_handle1")
+
+        msc = MotionStatechart()
+        goal = MoveAroundHinge(
+            handle_name=handle_body,
+            root_link=root,
+            tip_link=tip,
+        )
+        msc.add_node(goal)
+        msc.add_node(EndMotion.when_true(goal))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+
+        # 3 waypoint tasks + 3 monitors = 6 child nodes
+        assert len(goal.nodes) == 6
+        task_names = [n.name for n in goal.nodes if isinstance(n, _WaypointTask)]
+        assert task_names == ["down_short", "down_long", "up_long"]
+
+    def test_move_around_hinge_custom_multipliers(self, pr2_world_state_reset: World):
+        """
+        Test that custom multipliers produce the correct number of waypoints.
+        """
+        self._create_door_world(
+            world=pr2_world_state_reset,
+            door_name="mah_door2",
+            handle_name="mah_handle2",
+            hinge_name="mah_hinge2",
+            initial_angle=np.pi / 4,
+        )
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+        handle_body = pr2_world_state_reset.get_body_by_name("mah_handle2")
+
+        custom_multipliers = [(1.1, -0.5, "wp1"), (1.3, 0.5, "wp2")]
+
+        msc = MotionStatechart()
+        goal = MoveAroundHinge(
+            handle_name=handle_body,
+            root_link=root,
+            tip_link=tip,
+            multipliers=custom_multipliers,
+        )
+        msc.add_node(goal)
+        msc.add_node(EndMotion.when_true(goal))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+
+        # 2 waypoint tasks + 2 monitors = 4 child nodes
+        assert len(goal.nodes) == 4
+        task_names = [n.name for n in goal.nodes if isinstance(n, _WaypointTask)]
+        assert task_names == ["wp1", "wp2"]
+
+    def test_move_around_hinge_waypoint_start_end_conditions_chained(
+        self, pr2_world_state_reset: World
+    ):
+        """
+        Test that waypoint tasks are chained: each task starts when the previous
+        monitor is true, and ends when the next monitor is true.
+        """
+        self._create_door_world(
+            world=pr2_world_state_reset,
+            door_name="mah_door3",
+            handle_name="mah_handle3",
+            hinge_name="mah_hinge3",
+            initial_angle=np.pi / 4,
+        )
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+        handle_body = pr2_world_state_reset.get_body_by_name("mah_handle3")
+
+        msc = MotionStatechart()
+        goal = MoveAroundHinge(
+            handle_name=handle_body,
+            root_link=root,
+            tip_link=tip,
+        )
+        msc.add_node(goal)
+        msc.add_node(EndMotion.when_true(goal))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+
+        tasks = [n for n in goal.nodes if isinstance(n, _WaypointTask)]
+        monitors = [n for n in goal.nodes if isinstance(n, _PointReachedMonitor)]
+
+        # First task starts immediately (same start condition as goal)
+        assert tasks[0].start_condition == goal.start_condition
+        # First task ends when first monitor is true
+        assert (
+            monitors[0].observation_variable in tasks[0].end_condition.free_variables()
+        )
+        # Second task starts when first monitor is true
+        assert (
+            monitors[0].observation_variable
+            in tasks[1].start_condition.free_variables()
+        )
+        # Second monitor starts when first monitor is true
+        assert (
+            monitors[0].observation_variable
+            in monitors[1].start_condition.free_variables()
+        )
+
+    def test_move_around_hinge_debug_expressions_produced(
+        self, pr2_world_state_reset: World
+    ):
+        """
+        Test that build() returns one debug expression per waypoint.
+        """
+        self._create_door_world(
+            world=pr2_world_state_reset,
+            door_name="mah_door4",
+            handle_name="mah_handle4",
+            hinge_name="mah_hinge4",
+            initial_angle=np.pi / 4,
+        )
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+        handle_body = pr2_world_state_reset.get_body_by_name("mah_handle4")
+
+        msc = MotionStatechart()
+        goal = MoveAroundHinge(
+            handle_name=handle_body,
+            root_link=root,
+            tip_link=tip,
+        )
+        msc.add_node(goal)
+        msc.add_node(EndMotion.when_true(goal))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+
+        assert len(goal._waypoint_debug_expressions) == 3
+        debug_names = [d.name for d in goal._waypoint_debug_expressions]
+        assert debug_names == [
+            "goal_point_down_short",
+            "goal_point_down_long",
+            "goal_point_up_long",
+        ]
+
+    def test_move_around_hinge_with_gripper_axis_align_last(
+        self, pr2_world_state_reset: World
+    ):
+        """
+        Test that with tip_gripper_axis and LAST alignment, only the last task has align=True.
+        """
+        self._create_door_world(
+            world=pr2_world_state_reset,
+            door_name="mah_door5",
+            handle_name="mah_handle5",
+            hinge_name="mah_hinge5",
+            initial_angle=np.pi / 4,
+        )
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+        handle_body = pr2_world_state_reset.get_body_by_name("mah_handle5")
+
+        msc = MotionStatechart()
+        goal = MoveAroundHinge(
+            handle_name=handle_body,
+            root_link=root,
+            tip_link=tip,
+            tip_gripper_axis=Vector3.X(reference_frame=tip),
+            align_gripper=MoveAroundHingeAlign.LAST,
+        )
+        msc.add_node(goal)
+        msc.add_node(EndMotion.when_true(goal))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+
+        tasks = [n for n in goal.nodes if isinstance(n, _WaypointTask)]
+        assert tasks[0].align is False
+        assert tasks[1].align is False
+        assert tasks[2].align is True
+
+    def test_move_around_hinge_with_gripper_axis_align_all(
+        self, pr2_world_state_reset: World
+    ):
+        """
+        Test that with tip_gripper_axis and ALL alignment, every task has align=True.
+        """
+        self._create_door_world(
+            world=pr2_world_state_reset,
+            door_name="mah_door6",
+            handle_name="mah_handle6",
+            hinge_name="mah_hinge6",
+            initial_angle=np.pi / 4,
+        )
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "r_gripper_tool_frame"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+        handle_body = pr2_world_state_reset.get_body_by_name("mah_handle6")
+
+        msc = MotionStatechart()
+        goal = MoveAroundHinge(
+            handle_name=handle_body,
+            root_link=root,
+            tip_link=tip,
+            tip_gripper_axis=Vector3.X(reference_frame=tip),
+            align_gripper=MoveAroundHingeAlign.ALL,
+        )
+        msc.add_node(goal)
+        msc.add_node(EndMotion.when_true(goal))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+
+        tasks = [n for n in goal.nodes if isinstance(n, _WaypointTask)]
+        assert all(t.align is True for t in tasks)
 
 
 class TestVelocityTasks:
