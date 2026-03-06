@@ -37,7 +37,7 @@ jobs:
         run: |
           cd cognitive_robot_abstract_machine
           source /opt/ros/cram-env/bin/activate
-          pip install -e ./krrood -e ./random_events -e ./probabilistic_model -e ./pycram -e ./semantic_digital_twin -e ./giskardpy
+          pip install --force-reinstall -e ./krrood -e ./random_events -e ./probabilistic_model -e ./pycram -e ./semantic_digital_twin -e ./giskardpy
           poetry install
 
       - name: Restore cache
